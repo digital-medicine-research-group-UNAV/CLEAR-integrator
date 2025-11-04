@@ -1,0 +1,59 @@
+[workspace]
+channels = ["pytorch", "nvidia", "conda-forge"]
+name = "scripts"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = { version = "3.11.*", channel = "conda-forge" }
+numpy = { version = "1.26.*", channel = "conda-forge" }
+pandas = { version = "2.2.*", channel = "conda-forge" }
+scikit-learn = ">=1.7.2,<2"
+jupyterlab = ">=4.4.10,<5"
+matplotlib = { version = "3.8.*", channel = "conda-forge" }
+scipy = ">=1.16.2,<2"
+scanpy = ">=1.11.5,<2"
+umap-learn = ">=0.5.9.post2,<0.6"
+seaborn = ">=0.13.2,<0.14"
+joblib = ">=1.5.2,<2"
+h5py = ">=3.9.0,<4"
+scikit-misc = ">=0.5.1,<0.6"
+ipykernel = ">=7.0.1,<8"
+
+[environments]
+cpu = ["cpu"]
+gpu = ["gpu"]
+dojo = []
+integration = ["gpu", "integration"]
+
+[feature.cpu.dependencies]
+pytorch = { channel = "pytorch" }
+torchvision = { channel = "pytorch" }
+torchaudio = { channel = "pytorch" }
+cpuonly = { channel = "pytorch" }
+
+[feature.cpu.pypi-dependencies]
+torchsort = ">=0.1.10, <0.2"
+
+[feature.gpu.dependencies]
+pytorch = { channel = "pytorch" }
+torchvision = { channel = "pytorch" }
+torchaudio = { channel = "pytorch" }
+pytorch-cuda = { version = "12.1.*", channel = "pytorch" }
+libcublas = { version = "12.1.*", channel = "nvidia" }
+
+[feature.gpu.pypi-dependencies]
+torchsort = ">=0.1.10, <0.2"
+
+[feature.integration.pypi-dependencies]
+scvi-tools = ">=1.1.4,<1.2"
+scanorama = ">=1.7.4,<2"
+harmonypy = ">=0.0.10,<0.1"
+scFountain = ">=0.0.7,<0.1"
+jax = ">=0.4.26,<0.5"
+jaxlib = ">=0.4.26,<0.5"
+
+[tool.pixi.tasks]
+lab = "jupyter lab"
