@@ -1,0 +1,56 @@
+
+
+
+
+{
+  "default_params": {
+    "subset_max_cells": 90000,
+    "seed": 42,
+    "min_cells_per_type": 300,
+    "n_top_genes": 3000,
+    "data_path": "../../data/gexV9_processed.h5ad",
+    "hyperparams":{
+              "beta": [1.5],
+              "epochs_CG_start": [20],
+              "conf_T_init": [1.5],
+              "conf_T_max_decay": [0.5],
+              "lambda_size": [1.0],
+              "gamma_tau_align": [1.5],
+              "batch_size": [256]
+            }
+},
+  "experimento-batch": {
+    "description": "base",
+    "output_dir": "gexV9/experimento-batch",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {"GTEX-1HSMQ": [ "GTEX-13N11",
+                             "GTEX-1ICG6", "GTEX-15RIE", "GTEX-145ME", "GTEX-1I1GU",
+                              "GTEX-16BQI", "GTEX-144GM", "GTEX-15CHR", "GTEX-15SB6",
+                               "GTEX-12BJ1", "GTEX-1R9PN", "GTEX-1MCC2", "GTEX-15EOM" ]}
+  },
+  "experimento-tissue": {
+    "description": "base",
+    "data_path": "../../data/gexV9_processed.h5ad",
+    "output_dir": "gexV9/experimento-tissue",
+    "batch_key": "tissue",
+    "cell_type_col": "cell_type",
+    "methods": ["conftr"],
+    "reference_dictionary": {"anterior wall of left ventricle": [ 
+                             "lingula of left lung", "esophagus muscularis mucosa", "prostate gland",
+                              "gastrocnemius", "mucosa", "breast", "skin of leg" ]}
+  },
+  "experimento-scanorama": {
+    "description": "base",
+    "output_dir": "gexV9/experimento-scanorama",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scanorama", "combat", "conftr", "harmony"],
+    "reference_dictionary": {"GTEX-1HSMQ": [ "GTEX-13N11",
+                             "GTEX-1ICG6", "GTEX-15RIE", "GTEX-145ME", "GTEX-1I1GU",
+                              "GTEX-16BQI", "GTEX-144GM", "GTEX-15CHR", "GTEX-15SB6",
+                               "GTEX-12BJ1", "GTEX-1R9PN", "GTEX-1MCC2", "GTEX-15EOM" ]}
+  }
+}
+

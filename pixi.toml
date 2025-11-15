@@ -1,5 +1,7 @@
 [workspace]
+# Prioritize PyTorch/NVIDIA channels before conda-forge so CUDA libraries resolve with strict channel priority
 channels = ["pytorch", "nvidia", "conda-forge"]
+channel-priority = "disabled"
 name = "scripts"
 platforms = ["linux-64"]
 version = "0.1.0"
@@ -10,17 +12,22 @@ version = "0.1.0"
 python = { version = "3.11.*", channel = "conda-forge" }
 numpy = { version = "1.26.*", channel = "conda-forge" }
 pandas = { version = "2.2.*", channel = "conda-forge" }
-scikit-learn = ">=1.7.2,<2"
-jupyterlab = ">=4.4.10,<5"
-matplotlib = { version = "3.8.*", channel = "conda-forge" }
-scipy = ">=1.16.2,<2"
-scanpy = ">=1.11.5,<2"
-umap-learn = ">=0.5.9.post2,<0.6"
-seaborn = ">=0.13.2,<0.14"
-joblib = ">=1.5.2,<2"
-h5py = ">=3.9.0,<4"
-scikit-misc = ">=0.5.1,<0.6"
-ipykernel = ">=7.0.1,<8"
+scikit-learn = { version = ">=1.7.2,<2", channel = "conda-forge" }
+jupyterlab = { version = ">=4.2,<5", channel = "conda-forge" }
+# Use matplotlib-base to avoid unnecessary Qt/pyqt dependency when not needed
+matplotlib-base = { version = "3.8.*", channel = "conda-forge" }
+scipy = { version = ">=1.16.2,<2", channel = "conda-forge" }
+scanpy = { version = ">=1.11.5,<2", channel = "conda-forge" } 
+umap-learn = { version = ">=0.5.9.post2,<0.6", channel = "conda-forge" }
+seaborn = { version = ">=0.13.2,<0.14", channel = "conda-forge" }
+joblib = { version = ">=1.5.2,<2", channel = "conda-forge" }
+h5py = { version = ">=3.9.0,<4", channel = "conda-forge" }
+scikit-misc = { version = ">=0.5.1,<0.6", channel = "conda-forge" }
+ipykernel = { version = ">=6.29,<7", channel = "conda-forge" }
+
+pynndescent = { version = ">=0.5.11,<0.6", channel = "conda-forge" }
+python-igraph = { version = ">=0.10.8,<0.11", channel = "conda-forge" }
+leidenalg = { version = ">=0.10.1,<0.11", channel = "conda-forge" }
 
 [environments]
 cpu = ["cpu"]
@@ -43,6 +50,7 @@ torchvision = { channel = "pytorch" }
 torchaudio = { channel = "pytorch" }
 pytorch-cuda = { version = "12.1.*", channel = "pytorch" }
 libcublas = { version = "12.1.*", channel = "nvidia" }
+libcufft = { version = "11.0.2.4", channel = "nvidia" }
 
 [feature.gpu.pypi-dependencies]
 torchsort = ">=0.1.10, <0.2"
@@ -54,6 +62,7 @@ harmonypy = ">=0.0.10,<0.1"
 scFountain = ">=0.0.7,<0.1"
 jax = ">=0.4.26,<0.5"
 jaxlib = ">=0.4.26,<0.5"
+scib-metrics = ">=0.4,<1"
 
 [tool.pixi.tasks]
 lab = "jupyter lab"

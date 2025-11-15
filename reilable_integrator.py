@@ -5,6 +5,7 @@ from typing import Optional, Tuple, List, Dict, Callable
 
 import numpy as np
 import pandas as pd
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,7 +38,9 @@ except ModuleNotFoundError:
 
 plt.style.use("seaborn-v0_8")
 
-plots_dir = "V1.2/plots"
+plots_dir = None
+"""    """
+plots_dir = "plots"
 if os.path.exists(plots_dir):
     for filename in os.listdir(plots_dir):
         file_path = os.path.join(plots_dir, filename)
@@ -57,240 +60,63 @@ else:
 # Configuration
 # ---------------------------------------------------------------------------
 
-seed = 123
-n_genes = 3500
+#seed = 123
+#n_genes = 4000
+#adata_path = "../data/diabetic-kidney-disease_processed"
+#adata_read_path = adata_path + ".h5ad"
+#adata_save_path = adata_path + "_integrated_crTr.h5ad"
+#adata = sc.read_h5ad(adata_read_path) # sc.read_h5ad("../data/diabetic_processed.h5ad") #sc.read_h5ad("../data/MB_processed.h5ad") # sc.read_h5ad("../data/adata_tutorial.h5ad")
+
+#cell_type_col = "cell_type" #"cell_type" # "cell_type_eval"
+#use_layer = "counts"
+#batch_key = "assay" #"batch" # "batch" # "system"
+
+#reference_dictionary = {"healthy_6": ['healthy_5', 'healthy_4'],"control_3": ["control_1", "control_2"], 'diabetic_1': ['diabetic_2', 'diabetic_3','diabetic_4', 'diabetic_5']}
 
 
-adata = sc.read_h5ad("../data/diabetic_processed.h5ad") #sc.read_h5ad("../data/MB_processed.h5ad") # sc.read_h5ad("../data/adata_tutorial.h5ad")
+#reference_dictionary = {"healthy_6": ["control_1", "control_2", "control_3", "healthy_4", "healthy_5", 'diabetic_2', 'diabetic_3','diabetic_4', 'diabetic_5']}
+#reference_dictionary = {"10x 5' v1": ["10x 3' v3"]}
 
-cell_type_col = "cell_type" #"cell_type" # "cell_type_eval"
-use_layer = "counts"
-batch_key = "batch" # "batch" # "system"
 
-#reference_dictionary = {"healthy_6": ["healthy_5"],"control_3": ["control_1", "control_2"]}
-reference_dictionary = {"healthy_6": ["healthy_5", "control_3", "control_1", "control_2"]}
-
-reference_batch_default =[]
-batches = []
-for key, val in reference_dictionary.items():
-    reference_batch_default.append(key)
-    batches.extend(val)
-    batches.append(key)
+#reference_batch_default =[]
+#batches = []
+#for key, val in reference_dictionary.items():
+#    reference_batch_default.append(key)
+#    batches.extend(val)
+#    batches.append(key)
 
 
 #reference_batch_default = "healthy_6" #"snATAC"  # "snATAC" "10X" #"1"
 #batches = ["healthy_6", "control_3", "diabetic_1" ]# ["10X", "snATAC"] #["10X", "snATAC"] # ["0", "1"]
 
-vae_decoder_type = "gaussian"
-vae_use_zero_inflation = False
+
 
 vae_latent_dim = 16
-vae_num_batches_default = 2
-vae_hidden_layers = (564, 64)
-vae_dropout = 0.1
+vae_hidden_layers = (564, 164)
+umap_basis_model = None  # will hold the fitted UMAP for consistent coordinates
 
-train_cvae_epochs_default = 13000 # 1341
-train_cvae_lr_default = 5e-4
-train_cvae_kl_anneal_epochs_default = 1
-train_cvae_batch_size_default = 256
-train_weight_decay_default = 5e-4
-train_grad_clip_default = 1.0
-train_lr_gamma_default = 0.5
-train_lr_patience_default = 4
-train_min_lr_default = 5e-5
-train_early_stopping_patience_default = 10
+#train_weight_decay_default = 5e-4
+#train_grad_clip_default = 1.0
+#train_lr_gamma_default = 0.5
+#train_lr_patience_default = 4
+#train_min_lr_default = 4
+#train_early_stopping_patience_default = 15
 
 
-build_data_batch_size_default = train_cvae_batch_size_default
-calibration_fraction_default = 0.3  # Set >0 to hold out a calibration set (e.g., 0.4)
-build_data_val_fraction_default = 0.2
 
-EPS = 1e-8
+#EPS = 1e-8
 
-
-np.random.seed(seed)
-torch.manual_seed(seed)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Running on {device} (GPU available: {torch.cuda.is_available()})")
-
-
-# ---------------------------------------------------------------------------
-# Data preparation
-# ---------------------------------------------------------------------------
-
-if adata.layers.get(use_layer) is None:
-    adata.layers[use_layer] = adata.X.astype(int)
-#adata.layers["counts"] = adata.X.astype(int)
-
-adata.obs[batch_key] = adata.obs[batch_key].astype(str)
-if batches:
-    adata = adata[adata.obs[batch_key].isin(batches)].copy()
-    batches = sorted(adata.obs[batch_key].unique())
-else:
-    batches = sorted(adata.obs[batch_key].unique())
-
-adata = adata[adata.obs[cell_type_col].value_counts()[adata.obs[cell_type_col]].values >= 400].copy()
-
-if n_genes is not None:
-    sc.pp.highly_variable_genes(
-        adata,
-        n_top_genes=n_genes,
-        flavor="seurat_v3",
-        batch_key=batch_key,
-        subset=True,
-        layer=use_layer,
-    )
-
-counts_matrix = (
-    adata.layers[use_layer].toarray()
-    if sparse.issparse(adata.layers[use_layer])
-    else np.asarray(adata.layers[use_layer], dtype=np.float32)
-)
-
-counts_matrix = counts_matrix.astype(np.float32)
-obs_df = pd.DataFrame(adata.obs)
-
-if vae_decoder_type == "gaussian":
-    if "lognorm_gaussian" not in adata.layers:
-        
-        temp_adata = sc.AnnData(adata.layers[use_layer])
-        sc.pp.normalize_total(temp_adata, target_sum=1e4)
-        sc.pp.log1p(temp_adata)
-        
-        adata.layers["lognorm_gaussian"] = temp_adata.X.copy()
-
-    model_matrix = adata.layers["lognorm_gaussian"].astype(np.float32, copy=True)
-    print(model_matrix.shape, model_matrix.dtype, model_matrix[0,:5])
-
-else:
-    model_matrix = counts_matrix.copy()
-
-cell_types = adata.obs[cell_type_col].astype(str).unique().tolist()
+#seed = 123
+#np.random.seed(seed)
+#torch.manual_seed(seed)
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#print(f"Running on {device} (GPU available: {torch.cuda.is_available()})")
 
 
 
 
+#plots_dir = None
 
-sc.pp.pca(adata, n_comps=vae_latent_dim, svd_solver='arpack',key_added = "X_pca", layer="lognorm_gaussian")
-sc.pp.neighbors(adata, n_neighbors=15, n_pcs=vae_latent_dim , use_rep="X_pca")
-sc.tl.umap(adata, n_components=2, key_added="X_umap")
-
-cols_to_visualize = [batch_key, cell_type_col]
-
-fig, axs = plt.subplots(1, len(cols_to_visualize), figsize=(12, 5))
-
-for i, (col, ax) in enumerate(zip(cols_to_visualize, axs)):
-    sc.pl.embedding(
-        adata,
-        layer = "lognorm_gaussian",
-        basis="X_umap",  # Specify which embedding to use
-        color=col,       # The metadata column to color by
-        s=5,            # Size of the points in the scatter plot
-        ax=ax,           # The matplotlib axes object to plot on
-        show=False,      # Do not display the plot immediately
-        sort_order=False,# Do not sort points by color value
-        frameon=False,   # Remove the plot frame
-        legend_loc='on data' if col == cell_type_col else 'right margin', # Custom legend location
-        legend_fontsize=8,
-        title=col.replace('_', ' ').title() # Create a clean title (e.g., 'cell_type' -> 'Cell Type')
-    )
-    # Customize axis labels for clarity
-    ax.set_xlabel('UMAP 1', fontsize=10)
-    ax.set_ylabel('UMAP 2', fontsize=10)
-
-# Adjust layout to prevent titles and labels from overlapping
-plt.tight_layout()
-output_filename = os.path.join(plots_dir, "umap_preintegration.png") 
-fig.savefig(output_filename, dpi=300, bbox_inches='tight')
-
-
-# Tensor view of the full training matrix for callbacks/calibration
-#full_counts_tensor = torch.from_numpy(model_matrix).float()
-
-print("Dataset shape:", counts_matrix.shape)
-print("Cell types:", cell_types)
-print("Batches:", batches)
-
-
-
-
-# ---------------------------------------------------------------------------
-# Initial PCA overview (for reference)
-# ---------------------------------------------------------------------------
-
-pca_raw = PCA(n_components=2)
-pca_input = model_matrix if vae_decoder_type == "gaussian" else np.log1p(counts_matrix)
-coords_raw = pca_raw.fit_transform(pca_input)
-
-plot_df = pd.DataFrame(
-    {
-        "PC1": coords_raw[:, 0],
-        "PC2": coords_raw[:, 1],
-        batch_key: obs_df[batch_key].values,
-        cell_type_col: obs_df[cell_type_col].values,
-    }
-)
-
-if len(batches) == 1:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    if sns:
-        sns.scatterplot(
-            data=plot_df,
-            x="PC1",
-            y="PC2",
-            hue=cell_type_col,
-            ax=ax,
-            s=5,
-            alpha=0.7,
-        )
-        ax.legend(loc="best", fontsize=9)
-    else:
-        for label in plot_df[cell_type_col].unique():
-            mask = plot_df[cell_type_col] == label
-            ax.scatter(
-                plot_df.loc[mask, "PC1"],
-                plot_df.loc[mask, "PC2"],
-                s=35,
-                alpha=0.7,
-                label=label,
-            )
-        ax.legend(loc="best", fontsize=9)
-    ax.set_title(f"Batch {batches[0]} by cell type")
-else:
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    for ax, hue, title in zip(
-        axes,
-        [cell_type_col, batch_key],
-        ["Original data by cell type", "Original data by batch"],
-    ):
-        if sns:
-            sns.scatterplot(
-                data=plot_df,
-                x="PC1",
-                y="PC2",
-                hue=hue,
-                ax=ax,
-                s=5,
-                alpha=0.7,
-            )
-            ax.legend(loc="best", fontsize=9)
-        else:
-            for label in plot_df[hue].unique():
-                mask = plot_df[hue] == label
-                ax.scatter(
-                    plot_df.loc[mask, "PC1"],
-                    plot_df.loc[mask, "PC2"],
-                    s=35,
-                    alpha=0.7,
-                    label=label,
-                )
-            ax.legend(loc="best", fontsize=9)
-        ax.set_xlabel("PC1")
-        ax.set_ylabel("PC2")
-        ax.set_title(title)
-    plt.tight_layout()
-plt.savefig(os.path.join(plots_dir, "pca_original.png"), dpi=150)
-plt.close()
 
 
 
@@ -345,7 +171,7 @@ def save_latent_plot(latent_np: np.ndarray, title_suffix: str, filename: str) ->
     plt.savefig(os.path.join(plots_dir, filename), dpi=150)
     plt.close(fig)
 
-umap_basis_model = None  # will hold the fitted UMAP for consistent coordinates
+
 
 def reset_umap_basis():
     """Call this if you change latent dimensionality or want to refit the UMAP basis."""
@@ -486,8 +312,7 @@ def plot_training_curves(model, plots_dir=plots_dir, highlight_epoch: int = 21):
 
 
 
-# ---------------------------------------------------------------------------
-# Helpers
+
 
 # ---------------- Conformal Training (THR variant) ----------------
 
@@ -519,7 +344,7 @@ def _smooth_quantile_1d(values: torch.Tensor, q: float, tau: float = 1e-2) -> to
         low = int(torch.floor(torch.tensor(idx, device=values.device)).item())
         high = min(low + 1, n - 1)
         w = idx - low
-        return torch.lerp(s[low], s[high], torch.tensor(w, device=values.device, dtype=s.dtype))
+        return torch.lerp(s[low], s[high], torch.tensor(w, device=values.device, dtype=s.dtype)) #linear interpolation between low and high 
     else:
         # STE fallback
         try:
@@ -631,9 +456,8 @@ def _balanced_indices_for_calibration(
     y: torch.Tensor,
     cal_mask: Optional[torch.Tensor],
     *,
-    min_per_class: int = 0,
+    min_per_class: int = 5,
     min_total: int = 16,
-    cap_frac: float = 0.6,
     num_classes: Optional[int] = None,
     rng: Optional[torch.Generator] = None
 ):
@@ -648,16 +472,18 @@ def _balanced_indices_for_calibration(
         g.manual_seed(torch.randint(0, 2**31-1, (1,), device=device).item())
 
     all_idx = torch.arange(N, device=device)
+
     if cal_mask is None:
         pool_idx = all_idx
     else:
-        pool_idx = all_idx[cal_mask]
+        pool_idx = all_idx[cal_mask]   # cantidad de referencias en el minibatch que serán usados como calibración
         if pool_idx.numel() == 0:
             return torch.tensor([], device=device, dtype=torch.long), all_idx
             #pool_idx = all_idx  # fallback: no reference in minibatch
 
+    cap_frac: float = 0.5   # fracción máxima de B_cal respecto al numero de muestras de calibración en el minibatch
+    max_cal = max(1, int(cap_frac * pool_idx.numel()))
 
-    max_cal = max(1, int(cap_frac * N))
     if num_classes is None:
         K = int(y.max().item()) + 1
     else:
@@ -667,30 +493,38 @@ def _balanced_indices_for_calibration(
     if min_per_class <= 0:
         take = min(max_cal, pool_idx.numel())
         cal_idx = pool_idx[torch.randperm(pool_idx.numel(), generator=g, device=device)[:take]]
+
     else:
+
         parts = []
         ys = y[pool_idx]
         for k in range(K):
+
             k_idx = pool_idx[ys == k]
             if k_idx.numel() == 0:
                 continue
-            take_k = min(k_idx.numel(), min_per_class)
+
+            take_k = min(int(k_idx.numel()*0.5), min_per_class)  # num of samples to take from class k for calibration
+
             perm = torch.randperm(k_idx.numel(), generator=g, device=device)[:take_k]
             parts.append(k_idx[perm])
+
         if len(parts) == 0:
-            # fallback: random from pool
+                                                    # fallback: random from pool in case of no class representation
             take = min(max_cal, pool_idx.numel())
             cal_idx = pool_idx[torch.randperm(pool_idx.numel(), generator=g, device=device)[:take]]
+
         else:
-            cal_idx = torch.unique(torch.cat(parts))
+            cal_idx = torch.unique(torch.cat(parts)) # concatenate and unique
             # ensure minimum total
             if cal_idx.numel() < min_total:
-                remaining = pool_idx[~torch.isin(pool_idx, cal_idx)]
+                remaining = pool_idx[~torch.isin(pool_idx, cal_idx)] # remaining candidates
                 need = min_total - cal_idx.numel()
                 need = min(need, remaining.numel())
                 if need > 0:
-                    extra = remaining[torch.randperm(remaining.numel(), generator=g, device=device)[:need]]
+                    extra = remaining[torch.randperm(remaining.numel(), generator=g, device=device)[:need]] # random selection if neccesary
                     cal_idx = torch.unique(torch.cat([cal_idx, extra]))
+
             # cap to max_cal
             if cal_idx.numel() > max_cal:
                 perm = torch.randperm(cal_idx.numel(), generator=g, device=device)[:max_cal]
@@ -698,12 +532,15 @@ def _balanced_indices_for_calibration(
 
     pred_mask = torch.ones(N, dtype=torch.bool, device=device)
     pred_mask[cal_idx] = False
-    pred_idx = all_idx[pred_mask]
+    pred_idx = all_idx[pred_mask] #idx not in calibration set
+
     # guard rails
     if pred_idx.numel() == 0:
         pred_idx = all_idx #cal_idx
+
     #if cal_idx.numel() == 0:
     #    cal_idx = pred_idx
+
     return cal_idx, pred_idx
 
 
@@ -716,10 +553,9 @@ def conftr_loss_thr_balanced(
     kappa: float = 1.0,
     lambda_size: float = 1.0,
     cover_weight: float = 1.0,
-    other_weight: float = 0.0,
+    other_weight: float = 0.5,
     min_cal_per_class: int = 0,
     min_cal_total: int = 16,
-    cal_cap_frac: float = 0.6,
     num_classes: Optional[int] = None,
     rng: Optional[torch.Generator] = None
 ):
@@ -729,8 +565,7 @@ def conftr_loss_thr_balanced(
     """
     device = scores.device
     cal_idx, pred_idx = _balanced_indices_for_calibration(
-        y, cal_mask, min_per_class=min_cal_per_class, min_total=min_cal_total,
-        cap_frac=cal_cap_frac, num_classes=num_classes, rng=rng
+        y, cal_mask, min_per_class=min_cal_per_class, min_total=min_cal_total, num_classes=num_classes, rng=rng
     )
 
     if cal_idx.numel() == 0:
@@ -755,6 +590,7 @@ def conftr_loss_thr_balanced(
 
     # SmoothCal on B_cal
     tau = _smooth_calibrate_thr(scores[cal_idx], y[cal_idx], alpha=alpha, eps_sort=eps_sort)
+
     # SmoothPred on B_pred
     T = max(1e-6, float(temperature))
     C = torch.sigmoid((scores[pred_idx] - tau) / T)  # (B_pred, K)
@@ -790,11 +626,10 @@ def conftr_loss_mondrian_balanced(
     eps_sort: float = 1e-2,
     kappa: float = 1.0,
     lambda_size: float = 1.0,
-    cover_weight: float = 1.0,
-    other_weight: float = 0.0,
+    cover_weight: float = 0.5,
+    other_weight: float = 0.5,
     min_cal_per_class: int = 0,
     min_cal_total: int = 16,
-    cal_cap_frac: float = 0.6,
     num_classes: Optional[int] = None,
     rng: Optional[torch.Generator] = None,
     batch: Optional[torch.Tensor] = None,   # (N,) batch ids
@@ -817,11 +652,11 @@ def conftr_loss_mondrian_balanced(
         y, cal_mask,
         min_per_class=min_cal_per_class,
         min_total=min_cal_total,
-        cap_frac=cal_cap_frac,
         num_classes=K,
         rng=rng
     )
 
+    
     if cal_idx.numel() == 0:
         zero = scores.new_tensor(0.0)
         diag = {
@@ -846,34 +681,43 @@ def conftr_loss_mondrian_balanced(
         scores[cal_idx], y[cal_idx], K=K, alpha=alpha, eps_sort=eps_sort
     )
 
-    # SmoothPred with per-class thresholds
+    # SmoothPred with per-class thresholds (C is a matrix of soft memberships, shape (n_samples, n_classes)
     C = _smooth_pred_thr_mondrian(scores[pred_idx], tau_vec, temperature=temperature)
 
     # Class + size objectives 
-    rows = torch.arange(pred_idx.numel(), device=device)
-    include_true = C[rows, y[pred_idx]]
-    include_others = (C.sum(dim=1) - include_true)
+    rows = torch.arange(pred_idx.numel(), device=device) # we create row indices for indexing
+    include_true = C[rows, y[pred_idx]] # we extract the soft inclusion probabilities for the true classes
+    include_others = (C.sum(dim=1) - include_true) # we compute the soft inclusion probabilities for the other classes (residual)
 
-    L_class = cover_weight * (1.0 - include_true) + other_weight * include_others
-    Omega = torch.relu(C.sum(dim=1) - float(kappa))          # size penalty beyond κ
-    base_loss = torch.log(1e-6 + (L_class + float(lambda_size) * Omega).mean())
+    L_class = cover_weight * (1.0 - include_true) + other_weight * include_others   # conformal loss 
+
+    Omega = torch.relu(C.sum(dim=1) - float(kappa))                                 # size penalty beyond κ
+
+    base_loss = torch.log(1e-6 + (L_class + float(lambda_size) * Omega).mean())    # Regularized conformal loss 
 
     # ---- Conformal Exchangeability Regularizer (CER) --------------------------
     cer = scores.new_tensor(0.0)
     info_align = {}
 
     if batch is not None and (gamma_tau_align > 0.0):
+
         # 1) τ-alignment across batches, per class
         taus_gk, mask_gk = _smooth_calibrate_thr_mondrian_by_group(
-            scores=scores, y=y, g=batch, K=K, alpha=alpha, eps_sort=eps_sort
-        )  # taus_gk: (G,K), mask_gk: (G,K)
-        tau_ref = taus_gk[ref_batch_id]  # (K,)
+            scores=scores, y=y, g=batch, K=K, alpha=alpha, eps_sort=eps_sort)  # taus_gk: (G,K), mask_gk: (G,K)
+        
+        
+        
+        tau_ref = taus_gk[ref_batch_id]  # (K,)  # These are the class-wise thresholds for the reference batch
 
         if gamma_tau_align > 0.0:
+
             diff = torch.abs(taus_gk - tau_ref.unsqueeze(0))     # (G,K)
+            
             valid = mask_gk.clone()
+
             if ref_batch_id < valid.size(0):
                 valid[ref_batch_id, :] = False                   # don't compare ref to itself
+
             if valid.any():
                 cer = cer + gamma_tau_align * diff[valid].mean()
                 info_align["tau_align_mean_abs"] = float(diff[valid].mean().detach().cpu())
@@ -896,10 +740,6 @@ def conftr_loss_mondrian_balanced(
         **info_align,
     }
     return loss, diag
-
-# ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -925,14 +765,15 @@ def mlp(layer_sizes: Tuple[int, ...], dropout: float = 0.0, activation=nn.SiLU) 
     return nn.Sequential(*layers)
 
 
+
 @dataclass
 class VAEConfig:
     input_dim: int
-    latent_dim: int = vae_latent_dim
-    num_batches: int = vae_num_batches_default
+    latent_dim: int = 16
+    num_batches: int = None
     num_cell_types: int = 0
     hidden: Tuple[int, ...] = vae_hidden_layers
-    dropout: float = vae_dropout
+    dropout: float = 0.1
 
 
 class Encoder(nn.Module):
@@ -979,31 +820,33 @@ class ConditionalVAE(nn.Module):
         self.enable_classification = enable_classification
         self.encoder = Encoder(cfg)
         self.decoder = DecoderGaussian(cfg)
+
         # Conformal settings
         self.alpha = 0.1             # target miscoverage (alpha)
-        self.conf_T = 1.0            # temperature (scheduled in training)
-        self.conf_eps = 1e-2         # SmoothCal softness (scheduled)
-        self.tau_per_class = None    # tensor[K], set each epoch by trainer
-        self.kappa = 1.0               # size threshold for penalty
-
+        
         # Epoch coverage accumulators (set/reset by trainer)
         self._cov_epoch_total = None
         self._cov_epoch_covered = None
+
         # Quick scalar logging
         self.current_batch_class_acc = 0.0 
 
-        # ConfTr knobs and calibration policy
-        self.lambda_size = 1.5
-        self.other_weight = 0.5
-        self.min_cal_per_class = 10
-        self.min_cal_total = 32
-        self.cal_cap_frac = 0.6
+        # ConfTr fixed parameters
+        self.conf_eps = 1e-2                        # SmoothCal softness (scheduled) for differentiable quantile
+        self.cover_weight: float = 1.0
+        self.other_weight: float = 0.5
+        self.min_cal_per_class: int = 10
+        self.min_cal_total:int = 64
         self.num_classes = cfg.num_cell_types
-        self.gamma_tau_align = 1.15            
-        self.gamma_mmd_scores = 0.0
+        self.kappa: float = 1.5                    # size threshold for penalty (ligeramente > 1 para evitar 0-size sets)
+
+        # ConfTr hyperparameters (to be tuned)
+        self.conf_T: float = None                    # temperature (scheduled in training)
+        self.lambda_size: float = None
+        self.gamma_tau_align: float = None     
+
 
         
-
         # Classification head
         if enable_classification and cfg.num_cell_types > 0:
             self.classifier = nn.Sequential(
@@ -1031,9 +874,11 @@ class ConditionalVAE(nn.Module):
         return self.decoder(z, b, y)
 
     def log_prob_x_given_z(self, x: torch.Tensor, z: torch.Tensor, b: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        EPS = 1e-8
         mu_x, var_x = self.decode(z, b, y)
         log_prob = -0.5 * ((x - mu_x) ** 2 / (var_x + EPS) + torch.log(var_x + EPS) + math.log(2 * math.pi))
         return log_prob.sum(dim=-1)
+
 
     def forward(self, x: torch.Tensor,
                       b: torch.Tensor,
@@ -1057,22 +902,24 @@ class ConditionalVAE(nn.Module):
             per_task_sizes = []
             per_task_mean_set = []
             counted = torch.zeros_like(b, dtype=torch.bool) # to avoid double counting
+            
             for ref_idx, target_idxs in reference_batch_dict.items():
                 # mask for this task: only batches in {ref} ∪ targets
-                mask = (b == ref_idx) # cal mask
+                mask = (b == ref_idx) # cal 
+                
                 for t in target_idxs:
                     mask |= (b == t)
-
+                
                 if not mask.any():
                     continue       
             
                 scores_s = log_probs[mask]
                 y_s = y[mask]
                 b_s = b[mask]
-
+                  
                 # calibrate only on reference subset for this task
                 cal_mask_s = (b_s == ref_idx)
-
+                  
                 loss_s, diag_s = conftr_loss_mondrian_balanced(
                     scores=scores_s,
                     y=y_s,
@@ -1082,22 +929,25 @@ class ConditionalVAE(nn.Module):
                     eps_sort=self.conf_eps,
                     kappa=self.kappa,
                     lambda_size=self.lambda_size,
-                    cover_weight=1.0,
+                    cover_weight=self.cover_weight,
                     other_weight=self.other_weight,
                     min_cal_per_class=self.min_cal_per_class,
                     min_cal_total=self.min_cal_total,
-                    cal_cap_frac=self.cal_cap_frac,
                     num_classes=self.num_classes,
                     batch=b_s.long(),           # ok to use global ids
                     ref_batch_id=ref_idx,       # global ref id
                     gamma_tau_align=self.gamma_tau_align,
                 )
 
+                
+
+                if int(diag_s.get("B_cal", 0)) == 0:
+                    continue
+
                 per_task_losses.append(loss_s)
                 per_task_sizes.append(mask.sum())
                 per_task_mean_set.append(float(diag_s.get("mean_set_size_pred", 0.0)))
 
-                
 
                 # --- Coverage tracker update (per-task tau), without double-counting ---
                 if (self._cov_epoch_total is not None) and (self._cov_epoch_covered is not None):
@@ -1140,16 +990,16 @@ class ConditionalVAE(nn.Module):
 
 @dataclass
 class TrainConfig:
-    epochs: int = train_cvae_epochs_default
-    lr: float = train_cvae_lr_default
-    batch_size: int = train_cvae_batch_size_default
-    weight_decay: float = train_weight_decay_default
-    kl_anneal_epochs: int = train_cvae_kl_anneal_epochs_default
-    grad_clip: Optional[float] = train_grad_clip_default
-    lr_gamma: float = train_lr_gamma_default
-    lr_patience: int = train_lr_patience_default
-    min_lr: float = train_min_lr_default
-    early_stopping_patience: int = train_early_stopping_patience_default
+    epochs: int = 1000
+    lr: float = 5e-4
+    batch_size: int = 124
+    weight_decay: float = 5e-4
+    kl_anneal_epochs: int = 5
+    grad_clip: Optional[float] =  1.0
+    lr_gamma: float =  0.5
+    lr_patience: int = 4
+    min_lr: float = 4
+    early_stopping_patience: int = 12
 
 
 def _kl_beta(epoch: int, cfg: TrainConfig) -> float:
@@ -1165,11 +1015,18 @@ def train_cvae(
     cfg: TrainConfig,
     reference_batch_dict: dict = None,
     cal_indices: Optional[list] = None,
+    cell_types: Optional[list] = None,
     epoch_callback: Optional[Callable[[int, "ConditionalVAE", bool], None]] = None,
+    device: torch.device = torch.device("cpu"),
+    beta : float = None,
+    epochs_CG_start : int = None,
+    conf_T_init : float = None,
+    conf_T_max_decay : float = None,
+    lambda_size : float = None,
+    gamma_tau_align : float = None,
     ) -> None:
     
-    
-
+                
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -1190,19 +1047,34 @@ def train_cvae(
     best_state = None
     no_improve = 0
     val_no_improve = 0
+    no_improve_cov_overall = 0
+    best_callback_covgap = 0.0
 
+    # Default hyperparameters if not provided
+    beta = 1.0 if beta is None else beta
+    epochs_CG_start = 20 if epochs_CG_start is None else epochs_CG_start
+    conf_T_init = 1.5 if conf_T_init is None else conf_T_init
+    conf_T_max_decay = 0.5 if conf_T_max_decay is None else conf_T_max_decay
+    lambda_size = 1.0 if lambda_size is None else lambda_size
+    gamma_tau_align = 1.5 if gamma_tau_align is None else gamma_tau_align
+
+
+    #beta = 1.5
     # CG-specific settings
-    epochs_CG_start = 20
-    epochs_CG_end =  30
+    #epochs_CG_start = epochs_CG_start
+    epochs_CG_end =  epochs_CG_start + 10
     warm_T_epochs = int(epochs_CG_end - epochs_CG_start)
+
     model.conf_T = 1.00
-    model.conf_T_init = 0.9
-    model.conf_T_max_decay = 1.75
+    model.conf_T_init = conf_T_init
+    model.conf_T_max_decay = conf_T_max_decay
+    total_decay_amount = model.conf_T_init - model.conf_T_max_decay
+
+    model.lambda_size = lambda_size
+    model.gamma_tau_align = gamma_tau_align
 
     print("\nPARAMETERS:")
-    print(f"  ConfTr min_cal_per_class: {model.min_cal_per_class}")
-    print(f"  ConfTr min_cal_total: {model.min_cal_total}")
-    print(f"  ConfTr cal_cap_frac: {model.cal_cap_frac}")
+
     print(f"  epochs_CG_start: {epochs_CG_start}")
     print(f"  epochs_CG_end: {epochs_CG_end}")
     print(f"  batch_size: {cfg.batch_size}")
@@ -1212,26 +1084,24 @@ def train_cvae(
     print(f"  warm_T_epochs: {warm_T_epochs}")
     print(f"  kappa: {model.kappa}")
     print(f"  lambda_size: {model.lambda_size}")
+    print(f"  cover_weight: {model.cover_weight}")
     print(f"  other_weight: {model.other_weight}")
     print(f"  gamma_tau_align: {model.gamma_tau_align}")
 
-    
+   
     #ref_cal_indices = np.asarray(cal_indices, dtype=np.int64)
 
     Flag_lr_scheduler_step = False
     start_best_val_metric_flag = False
     for epoch in range(cfg.epochs):
         model.train()
-        # We train with SmoothCal inside the minibatch, so no epoch-level hard thresholds are needed.
-        model.tau_per_class = None
-
-
+        
         # Reset epoch coverage accumulators
         K = model.cfg.num_cell_types
         model._cov_epoch_total = torch.zeros(K, dtype=torch.float32, device=device)
         model._cov_epoch_covered = torch.zeros(K, dtype=torch.float32, device=device)
 
-        beta = 1.5 # _kl_beta(epoch, cfg)
+         
         total_elbo = 0.0
         total_n = 0
         total_loss = 0.0
@@ -1241,23 +1111,32 @@ def train_cvae(
         total_conftr_loss = 0.0
         total_conftr_weighted_loss = 0.0
         total_conftr_scaled_loss = 0.0
+        
 
         # Temperature schedule
-        
-        effective_epoch = epoch - epochs_CG_start
-        decay = effective_epoch  / warm_T_epochs # min(model.conf_T_max_decay, effective_epoch  / warm_T_epochs)
-        model.conf_T = min(model.conf_T_max_decay ,float(model.conf_T_init + decay))
+        if epoch <= epochs_CG_start + 1:
+            model.conf_T = model.conf_T_init
+        else:
+            effective_epoch = epoch - epochs_CG_start
+            decay_progress = min(1.0, effective_epoch / warm_T_epochs)
+            decay = total_decay_amount * decay_progress
+            model.conf_T = float(model.conf_T_init - decay)
+            #decay = 0.1 # effective_epoch  / warm_T_epochs # min(model.conf_T_max_decay, effective_epoch  / warm_T_epochs)
+            #model.conf_T = max(model.conf_T_max_decay ,float(model.conf_T_init - decay))
 
         if epoch == epochs_CG_start + 1:
             print("\n--- Starting Conformal Training with SmoothCal loss ---\n")
             best_metric = float("inf")
-            beta = 2.5 # strong regularization from here on for separability
+            best_callback_covgap = 0.0 #float("inf")
+            best_cov_overall = 0.0
+            no_improve_cov_overall = 0
+            #beta = 2.0 # strong regularization from here on for separability
 
         for xb, bb, yb in train_loader:
             xb = xb.to(device)
             bb = bb.to(device)
             yb = yb.to(device)
-
+            
             recon_loglik, kl, batch_acc, batch_cls_loss = model(xb, bb, yb, reference_batch_dict=reference_batch_dict)
             elbo = recon_loglik - beta * kl # de aquí sale un vector de tamaño batch
             
@@ -1274,7 +1153,7 @@ def train_cvae(
                 batch_magnitude = abs(weighted_batch_loss.detach().item())
 
                 if batch_magnitude > 1e-3:  # Avoid division by very small numbers
-                    target_ratio = 0.4  # Adjust this (0.1 to 0.5)
+                    target_ratio = 0.5  # Adjust this (0.1 to 0.5)
                     scaling_factor = (target_ratio * cvae_magnitude) / batch_magnitude
                     scaling_factor = min(scaling_factor, 5000.0)  # Cap to reasonable range
 
@@ -1342,7 +1221,7 @@ def train_cvae(
                     if epoch > epochs_CG_start and batch_cls_loss is not None and torch.isfinite(batch_cls_loss):
 
                         
-                        batch_loss_weight = 1.0
+                        batch_loss_weight = 1.5
                         weighted_batch_loss = batch_loss_weight * batch_cls_loss
 
                         cvae_magnitude = abs(loss_val.item())
@@ -1395,7 +1274,7 @@ def train_cvae(
                     per_class_cov[name] = float(cov_cov[k] / cov_total[k])
 
         if (epoch + 1) % 1 == 0 or epoch == 0:
-            msg = f"Epoch {epoch+1:03d} | beta={beta:.3f} | LR={opt.param_groups[0]['lr']:.6f} | T={model.conf_T:.2f} | Cov(overall)={cov_overall:.3f}"
+            msg = f"Epoch {epoch+1:03d} | beta={beta:.3f} | LR={opt.param_groups[0]['lr']:.6f} | T={model.conf_T:.2f} |  gamma_tau={model.gamma_tau_align:.2f} | Cov(overall)={cov_overall:.3f}"
             print(msg)
 
             print(f"--Train Loss: ELBO={-train_elbo:.3f} | ConfTr={train_conftr_scaled_loss:.3f} | Total={train_loss:.3f} ")
@@ -1415,8 +1294,10 @@ def train_cvae(
             scheduler.step(metric)
 
         if epoch_callback is not None and (epoch + 1) % 1 == 0:
-            epoch_callback(epoch + 1, model, False)
-        
+            callback_covgap = epoch_callback(epoch + 1, model, False)
+            #metric = callback_covgap
+            print(f"callback_covgap: {callback_covgap}")
+                    
         ### save epoch metrics in history
         entry = {
             "epoch": int(epoch + 1),
@@ -1445,38 +1326,83 @@ def train_cvae(
         ## ---------------------------------------------------------------------------
 
         # just for logging
-        if metric < best_metric + 1e-4:
-            #print(f"New best metric found: {metric:.4f} (previous: {best_metric:.4f})")
-            best_metric = metric
-            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            #no_improve = 0
+        if cov_overall > best_callback_covgap:
+            print(f"New best metric found: {cov_overall:.4f} (previous: { best_callback_covgap:.4f})")
+            best_callback_covgap  = cov_overall
+            
+            no_improve = 0
+
+            if callback_covgap <= 0.015:
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                print("\nSaved best model state based on callback coverage metric.\n")
+
         #else:
-        #    no_improve += 1
-        #    if no_improve >= cfg.early_stopping_patience:
-        #        print(f"Early stopping at epoch {epoch + 1}")
-                #break
+            #if epoch >= epochs_CG_start + 1:
+                #no_improve += 1
+                #print
+                #if no_improve >= cfg.early_stopping_patience - cfg.early_stopping_patience//2:
+                    #beta += 0.20
+                    #model.gamma_tau_align += 0.10
+                    #model.gamma_tau_align = min(model.gamma_tau_align, 2.0)
+                    #model.other_weight += 0.04
+                    #model.other_weight = min(model.other_weight, 1.0)
+                    #print(f"Increasing gamma_tau_align to {model.gamma_tau_align} and to encourage coverage.")
+                    #(f"Early stopping at epoch {epoch + 1}")
+                    #break
+                    #no_improve = 0
         
         # we are closer to the target coverage, we reduce lr to refine and avoid the nets learning too only to increase coverage
-        if cov_overall >= 1.0 - model.alpha - 0.025:
+        if ( callback_covgap <= 0.01 and epoch > epochs_CG_start ) or (start_best_val_metric_flag == True): # and (cov_overall >= 1.0 - model.alpha - 0.025):
             
             start_best_val_metric_flag = True
-            
-            
-            if cov_overall > best_cov:
-                best_cov = cov_overall
-            else:
-                no_improve += 1
-            
+
             if Flag_lr_scheduler_step == False:
                 print(f"Coverage target nearly reached, reducing LR at epoch {epoch + 1}")
-                opt.param_groups[0]['lr'] = 1e-5 #opt.param_groups[0]['lr'] * 0.1
+                opt.param_groups[0]['lr'] = opt.param_groups[0]['lr'] * 0.8
                 Flag_lr_scheduler_step = True
-
-            
 
             if cov_overall >= 1.0 - model.alpha - 0.01:
                 print(f"Desired coverage reached. Stopping at epoch {epoch + 1}")
                 break
+            
+            if cov_overall > best_cov_overall:
+                best_cov_overall = cov_overall
+                no_improve_cov_overall = 0
+            else:
+                no_improve_cov_overall += 1
+            
+            if no_improve_cov_overall >= cfg.early_stopping_patience:
+                print(f"Coverage overall did not improve for {cfg.early_stopping_patience} epochs, stopping at epoch {epoch + 1} to avoid neurons learn how to overcome coverage.")
+                break
+            
+
+            #if Flag_lr_scheduler_step == False:
+            #    print(f"Coverage target nearly reached, reducing LR at epoch {epoch + 1}")
+            #    opt.param_groups[0]['lr'] = 1e-5 #opt.param_groups[0]['lr'] * 0.1
+            #    Flag_lr_scheduler_step = True
+
+            #if callback_avg_size < 1.0:
+            #    no_improve += 1
+            #    if no_improve >= cfg.early_stopping_patience:
+            #        print(f"Average set size did not improve for {cfg.early_stopping_patience} epochs, stopping at epoch {epoch + 1} to avoid neurons learn how to overcome coverage.")
+            #        break
+            #else:
+
+            #print(f"Desired coverage reached. Stopping at epoch {epoch + 1}")
+            #break
+                
+
+            
+            
+            
+            #if callback_coverage > best_cov:
+             #   best_cov = callback_coverage
+            #else:
+            #    no_improve += 1
+            
+            #if cov_overall >= 1.0 - model.alpha - 0.01:
+            #    print(f"Desired coverage reached. Stopping at epoch {epoch + 1}")
+            #    break
 
             #if no_improve >= cfg.early_stopping_patience:
                 
@@ -1486,182 +1412,201 @@ def train_cvae(
 
             #    break
 
-        if start_best_val_metric_flag:
-            print( np.log(metric) + 1e-2, best_val_metric)
-            print(val_no_improve)
-            if np.log(metric) + 1e-2 > best_val_metric:
-                val_no_improve += 1
-                if val_no_improve >= cfg.early_stopping_patience:
-                    print(f"Validation metric did not improve for {cfg.early_stopping_patience} epochs, stopping at epoch {epoch + 1}.")
-                    break
+        #if start_best_val_metric_flag:
+        #    print( np.log(metric) + 1e-2, best_val_metric)
+        #    print(val_no_improve)
+        #    if np.log(metric) + 1e-2 > best_val_metric:
+        #        val_no_improve += 1
+        #        if val_no_improve >= cfg.early_stopping_patience:
+        #            print(f"Validation metric did not improve for {cfg.early_stopping_patience} epochs, stopping at epoch {epoch + 1}.")
+        #            break
 
-            else:
-                val_no_improve = 0
-                best_val_metric = np.log(metric)
+            #else:
+            #    val_no_improve = 0
+            #    best_val_metric = np.log(metric)
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        print("Loaded best model state based on callback coverage metric.")
 
     if epoch_callback is not None:
         epoch_callback(epoch + 1, model,True)    
                 
-    if best_state is not None:
-        model.load_state_dict(best_state)
+    
 
 
 # ---------------------------------------------------------------------------
 # Data loaders
 # ---------------------------------------------------------------------------
 
-# esto en el futuro hay que integrarlo en la clase
-batch_to_idx = {batch: idx for idx, batch in enumerate(batches)}
-cell_type_to_idx = {ct: idx for idx, ct in enumerate(cell_types)}
-ref_to_targets_idx = {
-    batch_to_idx[ref]: [batch_to_idx[t] for t in targets]
-    for ref, targets in reference_dictionary.items()
-}
-print("\nBatch to index mapping:", batch_to_idx)
-print("Cell type to index mapping:", cell_type_to_idx)
-print("Reference to targets index mapping:", ref_to_targets_idx)
+class DataPreparation():
 
-batch_codes = obs_df[batch_key].map(batch_to_idx).to_numpy()
-cell_type_codes = obs_df[cell_type_col].map(cell_type_to_idx).to_numpy()
-
-b_tensor = torch.from_numpy(batch_codes).long()
-ct_tensor = torch.from_numpy(cell_type_codes).long()
-
-# Extract non-reference batch data indices
-reference_batch_idx_list = []
-for ref in reference_batch_default:
-
-    reference_batch_idx = batch_to_idx[ref]
-    reference_batch_idx_list.append(reference_batch_idx)
-
-    print(f"Reference batch '{ref}' has index {reference_batch_idx}")
-
-
-#non_reference_batch = "0" if reference_batch_default == "1" else "1" # this part needs to be adapted if more than 2 batches
-
-
-
-
-
-
-def build_data_tensors(
-    counts_array: np.ndarray,
-    seed_offset: int = 0,
-    val_fraction: float = build_data_val_fraction_default,
-    batch_size: int = build_data_batch_size_default,
-    calibration_fraction: float = calibration_fraction_default,
-):  
+    def data_loader_prep(
+        self,
+        obs_df: pd.DataFrame,
+        batch_key: str,
+        cell_type_col: str,
+        reference_dictionary: dict,
+        seed: int = 0):
     
-    counts_tensor = torch.from_numpy(counts_array).float()
-    if counts_tensor.shape[0] != b_tensor.shape[0] or counts_tensor.shape[0] != ct_tensor.shape[0]:
-        raise ValueError("Counts tensor must align with batch and cell type annotations")
-    dataset = TensorDataset(counts_tensor, b_tensor, ct_tensor)
+        
+        cell_types = obs_df[cell_type_col].astype(str).unique().tolist()
+        reference_batch_default =[]
+        batches = []
+        for key, val in reference_dictionary.items():
+            reference_batch_default.append(key)
+            batches.extend(val)
+            batches.append(key)
 
-    # Determine calibration indices from reference batch only (recommended)
-    # Hold out a fixed fraction for calibration and exclude from train/val
+        batches = sorted(obs_df[batch_key].unique())
 
-    rng_local = np.random.default_rng(seed + 10 + seed_offset)
-    all_indices = np.arange(len(dataset))
 
-    if calibration_fraction > 0.0:
-        cal_indices_list = []
-        cal_indices = np.asarray([], dtype=np.int64)
-        for reference_batch_idx in reference_batch_idx_list:
+        batch_to_idx = {batch: idx for idx, batch in enumerate(batches)}
+        cell_type_to_idx = {ct: idx for idx, ct in enumerate(cell_types)}
+        self.ref_to_targets_idx = {
+            batch_to_idx[ref]: [batch_to_idx[t] for t in targets]
+            for ref, targets in reference_dictionary.items()}
 
-            ref_mask = (b_tensor.cpu().numpy() == reference_batch_idx)
-            ref_all = np.where(ref_mask)[0]
-            cal_size = int(np.floor(calibration_fraction * len(ref_all)))
 
-            if cal_size > 0:
-                # we implement stratified sampling by cell type here
+        print("\nBatch to index mapping:", batch_to_idx)
+        print("Cell type to index mapping:", cell_type_to_idx)
+        print("Reference to targets index mapping:", self.ref_to_targets_idx)
 
-                ref_ct = ct_tensor[ref_all].cpu().numpy()
-                unique_ct, inverse = np.unique(ref_ct, return_inverse=True)
+        batch_codes = obs_df[batch_key].map(batch_to_idx).to_numpy()
+        cell_type_codes = obs_df[cell_type_col].map(cell_type_to_idx).to_numpy()
 
-                cal_chunks = []
-                leftovers = []
-                for ct_idx, ct_value in enumerate(unique_ct):
-                    group_indices = ref_all[inverse == ct_idx]
-                    target = calibration_fraction * group_indices.size
-                    take = int(np.floor(target))
-                    if take > 0:
-                        cal_chunks.append(
-                            rng_local.choice(group_indices, size=take, replace=False)
-                        )
-                    leftovers.append((target - take, group_indices))
+        self.b_tensor = torch.from_numpy(batch_codes).long()
+        self.ct_tensor = torch.from_numpy(cell_type_codes).long()
 
-                cal_indices = np.concatenate(cal_chunks) if cal_chunks else np.asarray([], dtype=np.int64)
+        # Extract non-reference batch data indices
+        self.reference_batch_idx_list = []
+        for ref in reference_batch_default:
 
-                # Asegura el tamaño total repartiendo los sobrantes con mayor parte decimal.
-                need_extra = cal_size - cal_indices.size
-                if need_extra > 0:
-                    leftovers.sort(key=lambda t: t[0], reverse=True)
-                    extras = []
-                    for _, group_indices in leftovers:
-                        if need_extra <= 0:
-                            break
-                        available = np.setdiff1d(group_indices, cal_indices, assume_unique=False)
-                        if available.size > 0:
-                            grab = min(need_extra, available.size)
-                            extras.append(rng_local.choice(available, size=grab, replace=False))
-                            need_extra -= grab
-                    if extras:
-                        cal_indices = np.concatenate((cal_indices, *extras))
+            reference_batch_idx = batch_to_idx[ref]
+            self.reference_batch_idx_list.append(reference_batch_idx)
 
-                #cal_indices = rng_local.choice(ref_all, size=cal_size, replace=False)
+            print(f"Reference batch '{ref}' has index {reference_batch_idx}")
+
+
+
+    def build_data_tensors(
+        self,
+        counts_array: np.ndarray,
+        seed_offset: int = 0,
+        val_fraction: float = 0.2,
+        batch_size: int = 256,
+        calibration_fraction: float = 0.3,
+    ):  
+        
+        counts_tensor = torch.from_numpy(counts_array).float()
+        if counts_tensor.shape[0] != self.b_tensor.shape[0] or counts_tensor.shape[0] != self.ct_tensor.shape[0]:
+            raise ValueError("Counts tensor must align with batch and cell type annotations")
+        dataset = TensorDataset(counts_tensor, self.b_tensor, self.ct_tensor)
+
+        # Determine calibration indices from reference batch only (recommended)
+        # Hold out a fixed fraction for calibration and exclude from train/val
+
+        rng_local = np.random.default_rng(124 + 10 + seed_offset)
+        all_indices = np.arange(len(dataset))
+
+        if calibration_fraction > 0.0:
+            cal_indices_list = []
+            cal_indices = np.asarray([], dtype=np.int64)
+            for reference_batch_idx in self.reference_batch_idx_list:
+
+                ref_mask = (self.b_tensor.cpu().numpy() == reference_batch_idx)
+                ref_all = np.where(ref_mask)[0]
+                cal_size = int(np.floor(calibration_fraction * len(ref_all)))
+
+                if cal_size > 0:
+                    # we implement stratified sampling by cell type here
+
+                    ref_ct = self.ct_tensor[ref_all].cpu().numpy()
+                    unique_ct, inverse = np.unique(ref_ct, return_inverse=True)
+
+                    cal_chunks = []
+                    leftovers = []
+                    for ct_idx, ct_value in enumerate(unique_ct):
+                        group_indices = ref_all[inverse == ct_idx]
+                        target = calibration_fraction * group_indices.size
+                        take = int(np.floor(target))
+                        if take > 0:
+                            cal_chunks.append(
+                                rng_local.choice(group_indices, size=take, replace=False)
+                            )
+                        leftovers.append((target - take, group_indices))
+
+                    cal_indices = np.concatenate(cal_chunks) if cal_chunks else np.asarray([], dtype=np.int64)
+
+                    # Asegura el tamaño total repartiendo los sobrantes con mayor parte decimal.
+                    need_extra = cal_size - cal_indices.size
+                    if need_extra > 0:
+                        leftovers.sort(key=lambda t: t[0], reverse=True)
+                        extras = []
+                        for _, group_indices in leftovers:
+                            if need_extra <= 0:
+                                break
+                            available = np.setdiff1d(group_indices, cal_indices, assume_unique=False)
+                            if available.size > 0:
+                                grab = min(need_extra, available.size)
+                                extras.append(rng_local.choice(available, size=grab, replace=False))
+                                need_extra -= grab
+                        if extras:
+                            cal_indices = np.concatenate((cal_indices, *extras))
+
+                    #cal_indices = rng_local.choice(ref_all, size=cal_size, replace=False)
+                else:
+                    cal_indices = np.asarray([], dtype=np.int64)
+
+                cal_indices_list.append(cal_indices)
+        else:
+            cal_indices = np.asarray([], dtype=np.int64)
+
+        cal_index_flatten = np.concatenate(cal_indices_list) if calibration_fraction > 0.0 else np.asarray([], dtype=np.int64)
+        
+        # Pool for training/validation excludes calibration indices
+        if cal_index_flatten.size > 0:
+            pool_indices = np.setdiff1d(all_indices, cal_index_flatten, assume_unique=False)
+        else:
+            pool_indices = all_indices
+
+        # Build train/val subsets from pool
+        if val_fraction > 0.0:
+            n_val = int(np.floor(len(pool_indices) * val_fraction))
+            if n_val > 0:
+                val_sel = rng_local.choice(pool_indices, size=n_val, replace=False)
+                train_sel = np.setdiff1d(pool_indices, val_sel, assume_unique=False)
+                val_ds = Subset(dataset, val_sel.tolist())
             else:
-                cal_indices = np.asarray([], dtype=np.int64)
-
-            cal_indices_list.append(cal_indices)
-    else:
-        cal_indices = np.asarray([], dtype=np.int64)
-
-    cal_index_flatten = np.concatenate(cal_indices_list) if calibration_fraction > 0.0 else np.asarray([], dtype=np.int64)
-    
-    # Pool for training/validation excludes calibration indices
-    if cal_index_flatten.size > 0:
-        pool_indices = np.setdiff1d(all_indices, cal_index_flatten, assume_unique=False)
-    else:
-        pool_indices = all_indices
-
-    # Build train/val subsets from pool
-    if val_fraction > 0.0:
-        n_val = int(np.floor(len(pool_indices) * val_fraction))
-        if n_val > 0:
-            val_sel = rng_local.choice(pool_indices, size=n_val, replace=False)
-            train_sel = np.setdiff1d(pool_indices, val_sel, assume_unique=False)
-            val_ds = Subset(dataset, val_sel.tolist())
+                train_sel = pool_indices
+                val_ds = None
         else:
             train_sel = pool_indices
             val_ds = None
-    else:
-        train_sel = pool_indices
-        val_ds = None
 
-    train_ds = Subset(dataset, train_sel.tolist())
+        train_ds = Subset(dataset, train_sel.tolist())
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds is not None else None
-    
-    print(f"Train dataset length: {len(train_ds)}")
-    unique_labels, counts = torch.unique(dataset.tensors[2][train_ds.indices], return_counts=True)
-    label_counts_pytorch = dict(zip(unique_labels.tolist(), counts.tolist()))
-    print(label_counts_pytorch)
 
-    print(f"\nValidation dataset length: {len(val_ds) if val_ds is not None else 0}")
-    unique_labels, counts = torch.unique(dataset.tensors[2][val_ds.indices], return_counts=True)
-    label_counts_pytorch = dict(zip(unique_labels.tolist(), counts.tolist()))
-    print(label_counts_pytorch)
-    
-    for idx_cal in cal_indices_list:
-        print(f"\nCalibration set size: {idx_cal.size}")
-        unique_labels, counts = torch.unique(dataset.tensors[2][idx_cal], return_counts=True)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds is not None else None
+        
+        print(f"Train dataset length: {len(train_ds)}")
+        unique_labels, counts = torch.unique(dataset.tensors[2][train_ds.indices], return_counts=True)
+        label_counts_pytorch = dict(zip(unique_labels.tolist(), counts.tolist()))
+        print(label_counts_pytorch)
+
+        print(f"\nValidation dataset length: {len(val_ds) if val_ds is not None else 0}")
+        unique_labels, counts = torch.unique(dataset.tensors[2][val_ds.indices], return_counts=True)
         label_counts_pytorch = dict(zip(unique_labels.tolist(), counts.tolist()))
         print(label_counts_pytorch)
         
-
-    
-    return counts_tensor, train_loader, val_loader, cal_indices
+        for idx_cal in cal_indices_list:
+            print(f"\nCalibration set size: {idx_cal.size}")
+            unique_labels, counts = torch.unique(dataset.tensors[2][idx_cal], return_counts=True)
+            label_counts_pytorch = dict(zip(unique_labels.tolist(), counts.tolist()))
+            print(label_counts_pytorch)
+        
+        return counts_tensor, train_loader, val_loader, cal_indices_list
 
 
 def evaluate_latent_logreg(
@@ -1670,24 +1615,25 @@ def evaluate_latent_logreg(
     val_indices: np.ndarray,
     batch_labels: np.ndarray,
     cell_labels: np.ndarray,
-    reference_batch_idx: int,
+    ref_to_targets_idx: dict[int, list[int]],
     cal_indices: np.ndarray,
-    target_coverage: float = 0.90,
+    target_coverage: List[float] = [0.90],
 ) -> None:
+
+
     if val_indices.size == 0:
         print("Latent conformal evaluation skipped: validation set empty.")
         return
-    if cal_indices.size == 0:
-        print("Latent conformal evaluation skipped: calibration set empty.")
-        return
 
-    alpha = 1.0 - target_coverage
+    alpha_list = [1.0 - target_coverage_ for target_coverage_ in target_coverage] 
 
-    def compute_q_hat(nonconformity: np.ndarray) -> float:
+
+    def compute_q_hat(nonconformity: np.ndarray, alpha:float) -> float:
         n_cal = nonconformity.size
         if n_cal == 0:
             return 1.0
         ordered = np.sort(nonconformity)
+        
         rank = int(np.ceil((n_cal + 1) * (1 - alpha))) - 1
         rank = max(0, min(rank, n_cal - 1))
         return ordered[rank]
@@ -1696,10 +1642,11 @@ def evaluate_latent_logreg(
         clf: LogisticRegression,
         train_subset: np.ndarray,
         eval_subset: np.ndarray,
-        description: str,
+        cal_indices: np.ndarray,
+        target_coverage: List[float],
     ) -> None:
         if eval_subset.size == 0 or train_subset.size == 0:
-            print(f"{description} skipped: insufficient samples.")
+            print(f"skipped: insufficient samples.")
             return
 
         clf.fit(latent_np[train_subset], cell_labels[train_subset])
@@ -1707,58 +1654,95 @@ def evaluate_latent_logreg(
         cal_probs = clf.predict_proba(latent_np[cal_indices])
         cal_true_cols = np.searchsorted(clf.classes_, cell_labels[cal_indices])
         cal_scores = 1.0 - cal_probs[np.arange(cal_indices.size), cal_true_cols]
-        q_hat = compute_q_hat(cal_scores)
-        threshold = 1.0 - q_hat
 
         eval_probs = clf.predict_proba(latent_np[eval_subset])
         eval_true_cols = np.searchsorted(clf.classes_, cell_labels[eval_subset])
 
-        contains_true = eval_probs[np.arange(eval_subset.size), eval_true_cols] >= threshold
-        set_sizes = (eval_probs >= threshold).sum(axis=1)
+        cov_list = []
+        size_list = []
+        for alpha in alpha_list:
 
-        coverage = float(contains_true.mean())
-        avg_size = float(set_sizes.mean())
+            q_hat = compute_q_hat(cal_scores, alpha)
+            threshold = 1.0 - q_hat
+            
+            try:
+                contains_true = eval_probs[np.arange(eval_subset.size), eval_true_cols] >= threshold
+            except IndexError as e:
+                print(e)
+                print("IndexError in evaluating conformal sets. Check class labels and predictions. Probably some cell-type missing not in the reference batch.")
+                exit(1)
 
-        print(
-            f"{description} coverage: {coverage:.4f}, average set size: {avg_size:.2f} "
-            f"(target coverage {target_coverage:.0%})"
-        )
+
+            set_sizes = (eval_probs >= threshold).sum(axis=1)
+
+            coverage = float(contains_true.mean())
+            avg_size = float(set_sizes.mean())
+
+            cov_list.append(coverage)
+            size_list.append(avg_size)
+
+        for coverage, avg_size, target_coverage_ in zip(cov_list, size_list, target_coverage):
+
+            print(
+                f"coverage: {coverage:.4f}, (target coverage {target_coverage_:.0%}. average set size: {avg_size:.2f})\n\n"
+            )
+
+        covgap = np.mean([abs(c - t) for c, t in zip(cov_list, target_coverage)])
+
+        return covgap
 
     # Scenario 1: train on all batches → validate on all batches
-    run_scenario(
-        LogisticRegression(max_iter=1000),
-        train_indices,
-        val_indices,
-        "Latent conformal (train all batches -> test all batches) (allways achieved target coverage):\n",
-    )
+    #run_scenario(
+    #    LogisticRegression(max_iter=1000),
+    #    train_indices,
+    #    val_indices,
+    #    "Latent conformal (train all batches -> test all batches) (allways achieved target coverage):\n",
+    #)
 
     # Scenario 2: train only on reference batch → validate on remaining batches
-    train_mask = batch_labels[train_indices] == reference_batch_idx
-    eval_mask = batch_labels[val_indices] != reference_batch_idx
-    if train_mask.any() and eval_mask.any():
-        run_scenario(
-            LogisticRegression(max_iter=1000),
-            train_indices[train_mask],
-            val_indices[eval_mask],
-            "Latent conformal (train ref batch -> test other batches):\n",
-        )
-    else:
-        print("Latent conformal (train ref -> test other) skipped: insufficient samples.")
+    for idx,(reference_batch_idx, target_batch_idx_list) in enumerate(ref_to_targets_idx.items()):
 
-    return None
+        train_mask = batch_labels[train_indices] == reference_batch_idx
+        eval_mask = np.isin(batch_labels[val_indices], target_batch_idx_list)
+
+        #if len(target_batch_idx_list) == 1:
+        #    eval_mask = batch_labels[val_indices] == target_batch_idx_list[0]  # solo uno
+        #else:
+        #   eval_mask = batch_labels[val_indices] == target_batch_idx_list[0]
+        #   for t in target_batch_idx_list:
+        #       eval_mask = eval_mask | (batch_labels[val_indices] == t)
+               #eval_mask = batch_labels[val_indices] == target_batch_idx_list #aqui es donde hay que hacer que sean solo de los que queremos
+       
+        cal_indices_aux = cal_indices[idx]
+    
+
+        if train_mask.any() and eval_mask.any():
+            covgap = run_scenario(
+                                    LogisticRegression(max_iter=10000),
+                                    train_indices[train_mask],
+                                    val_indices[eval_mask],
+                                    cal_indices_aux,
+                                    target_coverage
+                                )
+        else:
+            print("Latent conformal (train ref -> test other) skipped: insufficient samples.")
+
+    return covgap
 
 
 
-class Integrator:
+class Integrator(DataPreparation):
 
-    def __init__(self, 
+    def __init__(self,  
                 seed_offset: int = 0,
-                epochs: int = train_cvae_epochs_default,
-                lr: float = train_cvae_lr_default,
-                kl_anneal_epochs: int = train_cvae_kl_anneal_epochs_default,
-                batch_size: int = train_cvae_batch_size_default,
-                calibration_fraction: float = calibration_fraction_default,
-                val_fraction: float = build_data_val_fraction_default,):
+                epochs: int = 3000,
+                lr: float = 5e-4,
+                kl_anneal_epochs: int = 1,
+                batch_size: int = 64,
+                calibration_fraction: float = 0.3,
+                val_fraction: float = 0.2,
+                device: str = torch.device("cuda" if torch.cuda.is_available() else "cpu")):
+
         
         self.seed_offset = seed_offset
         self.epochs = epochs
@@ -1767,13 +1751,24 @@ class Integrator:
         self.batch_size = batch_size
         self.calibration_fraction = calibration_fraction
         self.val_fraction = val_fraction
-
+        self.device = device# torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
 
     def train_cvae_on_counts(
         self,
         counts_array: np.ndarray,
+        df_obs: pd.DataFrame,
+        batch_key: str,
+        cell_type_col: str,
+        cell_types: list,
         ref_batch: dict,
+        verbose: bool = True,
+        beta : float = None,
+        epochs_CG_start : int = None,
+        conf_T_init : float = None,
+        conf_T_max_decay : float = None,
+        lambda_size : float = None,
+        gamma_tau_align : float = None,
     ):
         
         # lets print the original UMAP before training:
@@ -1788,16 +1783,67 @@ class Integrator:
 
         counts_array = counts_array.astype(np.float32, copy=False)
 
-           
-        print("\nBuilding data tensors...")
-        counts_tensor, train_loader, val_loader, cal_indices = build_data_tensors(
-            counts_array,
-            seed_offset=self.seed_offset,
-            batch_size=self.batch_size,
-            calibration_fraction=self.calibration_fraction,
-            val_fraction=self.val_fraction
+        self.data_loader_prep(
+            obs_df=df_obs,
+            batch_key=batch_key,
+            cell_type_col=cell_type_col,
+            reference_dictionary=ref_batch
         )
+           
+        
+        print("\nBuilding data tensors and adjusting batch size...")
+        for ref_idx, target_idxs in self.ref_to_targets_idx.items():
+            cal_samples_av = 0.0
+            while cal_samples_av <= 90:   
+                
+                counts_tensor, train_loader, val_loader, cal_indices = self.build_data_tensors(
+                    counts_array,
+                    seed_offset=self.seed_offset,
+                    batch_size=self.batch_size,
+                    calibration_fraction=self.calibration_fraction,
+                    val_fraction=self.val_fraction
+                )
 
+                cal_samples = []
+                for xb, bb, yb in train_loader:
+                    xb = xb.to(self.device)
+                    bb = bb.to(self.device)
+                    yb = yb.to(self.device)
+                    
+                    # mask for this task: only batches in {ref} ∪ targets
+                    mask = (bb == ref_idx) # cal 
+                    
+                    for t in target_idxs:
+                        mask |= (bb == t)
+                    
+                    if not mask.any():
+                        continue   
+                    
+                    y_s = yb[mask]
+                    b_s = bb[mask]
+                    
+                    cal_mask_s = (b_s == ref_idx)
+
+                    all_idx = torch.arange(b_s.size(0), device=self.device)
+                
+                    pool_idx = all_idx[cal_mask_s]
+                        
+                    cal_samples.append(pool_idx.numel())
+
+                cal_samples_av = np.sum(cal_samples)/len(cal_samples)  
+
+                print(f"Current batch size: {self.batch_size}, average cal samples for ref batch {ref_idx}: {cal_samples_av}")
+                if cal_samples_av <= 90:
+                    self.batch_size = int(self.batch_size * 2)
+
+        print(f"\nAdjusted batch size: {self.batch_size}\n")
+
+        print("cal indices length:", len(cal_indices))
+        print(self.reference_batch_idx_list)
+        print(self.ref_to_targets_idx)
+
+        
+        batches = sorted(df_obs[batch_key].unique().tolist())
         
         cfg = VAEConfig(
             input_dim=counts_array.shape[1],
@@ -1805,10 +1851,13 @@ class Integrator:
             num_batches=len(batches),
             num_cell_types=len(cell_types),
             hidden=vae_hidden_layers,
-            dropout=vae_dropout,
+            dropout=0.1,
         )
 
-        model = ConditionalVAE(cfg).to(device)
+        
+
+        model = ConditionalVAE(cfg).to(self.device)
+
         train_cfg = TrainConfig(
             epochs=self.epochs,
             lr=self.lr,
@@ -1824,51 +1873,84 @@ class Integrator:
             model_snapshot.eval()
             with torch.no_grad():
                 mu_epoch, _ = model_snapshot.encode(
-                    counts_tensor.to(device),
-                    b_tensor.to(device),
-                    ct_tensor.to(device),
+                    counts_tensor.to(self.device),
+                    self.b_tensor.to(self.device),
+                    self.ct_tensor.to(self.device),
                 )
             latent_epoch_np = mu_epoch.cpu().numpy()
 
-            save_latent_plot(latent_epoch_np, f"epoch {epoch_idx:03d}", f"latent_space_epoch_{epoch_idx:03d}.png")
+            if verbose:
+                save_latent_plot(latent_epoch_np, f"epoch {epoch_idx:03d}", f"latent_space_epoch_{epoch_idx:03d}.png")
+
+            if val_loader is not None:
+
+                train_idx = np.asarray(train_loader.dataset.indices, dtype=int)
+                val_idx = np.asarray(val_loader.dataset.indices, dtype=int)
+                target_coverage = [0.90]
+                covgap = evaluate_latent_logreg(
+                            latent_epoch_np,
+                            train_idx,
+                            val_idx,
+                            self.b_tensor.cpu().numpy(),
+                            self.ct_tensor.cpu().numpy(),
+                            self.ref_to_targets_idx,
+                            cal_indices,  # cal_indices already filtered to only cointain reference batch samples
+                            target_coverage)  
+
 
             #if int(epoch_idx) == 0:
                 #reset_umap_basis()
             
-            if int(epoch_idx) == 20:
+            if int(epoch_idx) == 20 and verbose:
                 save_latent_umap(latent_epoch_np, f"epoch {epoch_idx:03d}", f"latent_space_epoch_{epoch_idx:03d}_UMAP.png")
 
-            if int(epoch_idx) % 40 == 1:
+            if int(epoch_idx) % 40 == 1 and verbose:
                 save_latent_umap(latent_epoch_np, f"epoch {epoch_idx:03d}", f"latent_space_epoch_{epoch_idx:03d}_UMAP.png")
 
             if final:
-                save_latent_umap(latent_epoch_np, f"epoch {epoch_idx:03d}", f"latent_space_epoch_{epoch_idx:03d}_UMAP.png")
+                if verbose:
+                    save_latent_umap(latent_epoch_np, f"epoch {epoch_idx:03d}", f"latent_space_epoch_{epoch_idx:03d}_UMAP.png")
 
                 if val_loader is not None:
 
                     train_idx = np.asarray(train_loader.dataset.indices, dtype=int)
                     val_idx = np.asarray(val_loader.dataset.indices, dtype=int)
+                    target_coverage = [0.90]
                     evaluate_latent_logreg(
                         latent_epoch_np,
                         train_idx,
                         val_idx,
-                        b_tensor.cpu().numpy(),
-                        ct_tensor.cpu().numpy(),
-                        reference_batch_idx,
-                        cal_indices)  # cal_indices already filtered to only cointain reference batch samples
+                        self.b_tensor.cpu().numpy(),
+                        self.ct_tensor.cpu().numpy(),
+                        self.ref_to_targets_idx,
+                        cal_indices,
+                        target_coverage)  # cal_indices already filtered to only cointain reference batch samples
+                    
 
             model_snapshot.train()
 
-        
+
+            return covgap
+
+            
+
 
         train_cvae(
             model,
             train_loader,
             val_loader,
             train_cfg,
-            reference_batch_dict=ref_to_targets_idx, #reference_batch_idx,
+            reference_batch_dict=self.ref_to_targets_idx, #reference_batch_idx,
             cal_indices=cal_indices,
+            cell_types=cell_types,
             epoch_callback=latent_progress_callback,
+            device=self.device,
+            beta = beta,
+            epochs_CG_start  = epochs_CG_start,
+            conf_T_init  = conf_T_init,
+            conf_T_max_decay = conf_T_max_decay,
+            lambda_size  = lambda_size,
+            gamma_tau_align  = gamma_tau_align,
         )
 
 
@@ -1876,52 +1958,293 @@ class Integrator:
 
 
 # ---------------------------------------------------------------------------
-# Train once and collect summaries
-# ---------------------------------------------------------------------------
+# MAAIN SCRIPT
+# --------------------------------------------------------------------------
 
 
+if __name__ == "__main__":
+   
+    # ---------------------------------------------------------------------------
+    # Configuration
+    # ---------------------------------------------------------------------------
+
+    EPS = 1e-8
+    seed = 123
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Running on {device} (GPU available: {torch.cuda.is_available()})")
+
+    n_genes = 4000
+    adata_path = "../../data/diabetic-kidney-disease_processed" #"../data/gexV9_processed" #"../data/diabetic-kidney-disease_processed"
+    adata_read_path = adata_path + ".h5ad"
+    adata_save_path = adata_path + "_integrated_crTr.h5ad"
+    adata = sc.read_h5ad(adata_read_path) # sc.read_h5ad("../data/diabetic_processed.h5ad") #sc.read_h5ad("../data/MB_processed.h5ad") # sc.read_h5ad("../data/adata_tutorial.h5ad")
+
+    cell_type_col = "cell_type" #"cell_type" # "cell_type_eval"
+    use_layer = "counts"
+    batch_key = "batch" #"assay" #"batch" # "batch" # "system"
+    vae_decoder_type = "gaussian"
+
+    #reference_dictionary = {"healthy_6": ['healthy_5', 'healthy_4'],"control_3": ["control_1", "control_2"]}
 
 
-integrador = Integrator(
-    seed_offset=0,
-    epochs=train_cvae_epochs_default,
-    lr=train_cvae_lr_default,
-    kl_anneal_epochs=train_cvae_kl_anneal_epochs_default,
-    batch_size=train_cvae_batch_size_default,
-    calibration_fraction=calibration_fraction_default,
-    val_fraction=build_data_val_fraction_default,
-)
+    reference_dictionary = {"healthy_6": ["control_1", "control_2", "control_3", "healthy_4", "healthy_5", 'diabetic_2', 'diabetic_3','diabetic_4', 'diabetic_5']}
 
-model, counts_tensor = integrador.train_cvae_on_counts(
-        model_matrix,
-        ref_batch = reference_dictionary,
+    #reference_dictionary = {"GTEX-1HSMQ": [ 'GTEX-13N11', 'GTEX-1ICG6', 'GTEX-15RIE', 'GTEX-145ME', 'GTEX-1I1GU', 'GTEX-16BQI', 'GTEX-144GM', 'GTEX-15CHR', 'GTEX-15SB6', 'GTEX-12BJ1', 'GTEX-1R9PN', 'GTEX-1CAMS', 'GTEX-1MCC2', 'GTEX-15EOM' ]}
+
+    #reference_dictionary = {"10x 5' v1": ["10x 3' v3"]}
+
+
+    reference_batch_default =[]
+    batches = []
+    for key, val in reference_dictionary.items():
+        reference_batch_default.append(key)
+        batches.extend(val)
+        batches.append(key)
+
+
+    # ---------------------------------------------------------------------------
+    # Data preparation
+    # ---------------------------------------------------------------------------
+
+    if adata.layers.get(use_layer) is None:
+        adata.layers[use_layer] = adata.X.astype(int)
+    #adata.layers["counts"] = adata.X.astype(int)
+
+    adata.obs[batch_key] = adata.obs[batch_key].astype(str)
+    if batches:
+        adata = adata[adata.obs[batch_key].isin(batches)].copy()
+        batches = sorted(adata.obs[batch_key].unique())
+    else:
+        batches = sorted(adata.obs[batch_key].unique())
+
+    adata = adata[adata.obs[cell_type_col].value_counts()[adata.obs[cell_type_col]].values >= 400].copy()
+
+    if n_genes is not None:
+        try:
+            sc.pp.highly_variable_genes(
+                adata,
+                n_top_genes=n_genes,
+                flavor="seurat_v3",
+                batch_key=batch_key,
+                subset=True,
+                layer=use_layer,
+            )
+        except Exception as e:
+            sc.pp.highly_variable_genes(
+                adata,
+                n_top_genes=n_genes,
+                flavor="seurat_v3",
+                batch_key=batch_key,
+                subset=True,
+                span=0.7,
+                layer=use_layer,
+            )
+
+    counts_matrix = (
+        adata.layers[use_layer].toarray()
+        if sparse.issparse(adata.layers[use_layer])
+        else np.asarray(adata.layers[use_layer], dtype=np.float32)
     )
 
-# Example: use 40% of reference-batch samples for calibration and the rest for training only (no validation)
+    counts_matrix = counts_matrix.astype(np.float32)
+    obs_df = pd.DataFrame(adata.obs)
 
-#model, counts_tensor = train_cvae_on_counts(
-    #model_matrix,
-    #seed_offset=0,
-    #ref_batch = reference_dictionary,
-    #calibration_fraction=calibration_fraction_default,
-    #val_fraction=build_data_val_fraction_default
-    #)
+    if vae_decoder_type == "gaussian":
+        if "lognorm_gaussian" not in adata.layers:
+            
+            temp_adata = sc.AnnData(adata.layers[use_layer])
+            sc.pp.normalize_total(temp_adata, target_sum=1e4)
+            sc.pp.log1p(temp_adata)
+            
+            adata.layers["lognorm_gaussian"] = temp_adata.X.copy()
 
-print("\nModel integrated!")
+        model_matrix = adata.layers["lognorm_gaussian"].astype(np.float32, copy=True)
+        #print(model_matrix.shape, model_matrix.dtype, model_matrix[0,:5])
 
-plot_training_curves(model, plots_dir=plots_dir)
+    else:
+        model_matrix = counts_matrix.copy()
 
-model.eval()
-with torch.no_grad():
-    mu_z, logvar_z = model.encode(
-        counts_tensor.to(device),
-        b_tensor.to(device),
-        ct_tensor.to(device),
+    cell_types = adata.obs[cell_type_col].astype(str).unique().tolist()
+
+
+    # Tensor view of the full training matrix for callbacks/calibration
+    #full_counts_tensor = torch.from_numpy(model_matrix).float()
+
+    print("Dataset shape:", model_matrix.shape)
+    print("Cell types:", cell_types)
+    print("Batches:", batches)
+
+
+    # ---------------------------------------------------------------------------
+    # Initial plotting UMAP and PCA before integration:
+    # ---------------------------------------------------------------------------
+    
+    umap_basis_model = None  # will hold the fitted UMAP for consistent coordinates
+    sc.pp.pca(adata, n_comps=vae_latent_dim, svd_solver='arpack',key_added = "X_pca", layer="lognorm_gaussian")
+    sc.pp.neighbors(adata, n_neighbors=15, n_pcs=vae_latent_dim , use_rep="X_pca")
+    sc.tl.umap(adata, n_components=2, key_added="X_umap")
+
+    cols_to_visualize = [batch_key, cell_type_col]
+
+    fig, axs = plt.subplots(1, len(cols_to_visualize), figsize=(12, 5))
+
+    for i, (col, ax) in enumerate(zip(cols_to_visualize, axs)):
+        sc.pl.embedding(
+            adata,
+            layer = "lognorm_gaussian",
+            basis="X_umap",  # Specify which embedding to use
+            color=col,       # The metadata column to color by
+            s=5,            # Size of the points in the scatter plot
+            ax=ax,           # The matplotlib axes object to plot on
+            show=False,      # Do not display the plot immediately
+            sort_order=False,# Do not sort points by color value
+            frameon=False,   # Remove the plot frame
+            legend_loc='on data' if col == cell_type_col else 'right margin', # Custom legend location
+            legend_fontsize=8,
+            title=col.replace('_', ' ').title() # Create a clean title (e.g., 'cell_type' -> 'Cell Type')
+        )
+        # Customize axis labels for clarity
+        ax.set_xlabel('UMAP 1', fontsize=10)
+        ax.set_ylabel('UMAP 2', fontsize=10)
+
+    # Adjust layout to prevent titles and labels from overlapping
+    plt.tight_layout()
+    output_filename = os.path.join(plots_dir, "umap_preintegration.png") 
+    fig.savefig(output_filename, dpi=300, bbox_inches='tight')
+
+    pca_raw = PCA(n_components=2)
+    pca_input = model_matrix if vae_decoder_type == "gaussian" else np.log1p(counts_matrix)
+    coords_raw = pca_raw.fit_transform(pca_input)
+
+    plot_df = pd.DataFrame(
+        {
+            "PC1": coords_raw[:, 0],
+            "PC2": coords_raw[:, 1],
+            batch_key: obs_df[batch_key].values,
+            cell_type_col: obs_df[cell_type_col].values,
+        }
     )
-    latent_np = mu_z.cpu().numpy()
-    recon_mu, _ = model.decode(mu_z, b_tensor.to(device), ct_tensor.to(device))
-    recon_np = recon_mu.cpu().numpy()
-    logvar_np = logvar_z.cpu().numpy()
+
+    if len(batches) == 1:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        if sns:
+            sns.scatterplot(
+                data=plot_df,
+                x="PC1",
+                y="PC2",
+                hue=cell_type_col,
+                ax=ax,
+                s=5,
+                alpha=0.7,
+            )
+            ax.legend(loc="best", fontsize=9)
+        else:
+            for label in plot_df[cell_type_col].unique():
+                mask = plot_df[cell_type_col] == label
+                ax.scatter(
+                    plot_df.loc[mask, "PC1"],
+                    plot_df.loc[mask, "PC2"],
+                    s=35,
+                    alpha=0.7,
+                    label=label,
+                )
+            ax.legend(loc="best", fontsize=9)
+        ax.set_title(f"Batch {batches[0]} by cell type")
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        for ax, hue, title in zip(
+            axes,
+            [cell_type_col, batch_key],
+            ["Original data by cell type", "Original data by batch"],
+        ):
+            if sns:
+                sns.scatterplot(
+                    data=plot_df,
+                    x="PC1",
+                    y="PC2",
+                    hue=hue,
+                    ax=ax,
+                    s=5,
+                    alpha=0.7,
+                )
+                ax.legend(loc="best", fontsize=9)
+            else:
+                for label in plot_df[hue].unique():
+                    mask = plot_df[hue] == label
+                    ax.scatter(
+                        plot_df.loc[mask, "PC1"],
+                        plot_df.loc[mask, "PC2"],
+                        s=35,
+                        alpha=0.7,
+                        label=label,
+                    )
+                ax.legend(loc="best", fontsize=9)
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+            ax.set_title(title)
+        plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, "pca_original.png"), dpi=150)
+    plt.close()
+
+
+
+
+    train_cvae_epochs_default =  100
+    train_cvae_lr_default = 5e-4
+    train_cvae_kl_anneal_epochs_default = 1
+    train_cvae_batch_size_default = 32
+    calibration_fraction_default = 0.3  # Set >0 to hold out a calibration set (e.g., 0.4)
+    build_data_val_fraction_default = 0.2
+
+    integrador = Integrator(
+        seed_offset=0,
+        epochs=train_cvae_epochs_default,
+        lr=train_cvae_lr_default,
+        kl_anneal_epochs=train_cvae_kl_anneal_epochs_default,
+        batch_size=train_cvae_batch_size_default,
+        calibration_fraction=calibration_fraction_default,
+        val_fraction=build_data_val_fraction_default,
+    )
+
+    
+
+    model, counts_tensor = integrador.train_cvae_on_counts(
+            model_matrix,
+            df_obs=obs_df,
+            batch_key=batch_key,
+            cell_type_col=cell_type_col,
+            cell_types=cell_types,
+            ref_batch=reference_dictionary,
+        )
+
+
+    print("\nModel integrated!")
+
+    plot_training_curves(model, plots_dir=plots_dir)
+
+    model.eval()
+    with torch.no_grad():
+        mu_z, logvar_z = model.encode(
+            counts_tensor.to(device),
+            integrador.b_tensor.to(device),
+            integrador.ct_tensor.to(device),
+        )
+        latent_np = mu_z.cpu().numpy()
+        recon_mu, _ = model.decode(mu_z, integrador.b_tensor.to(device), integrador.ct_tensor.to(device))
+        recon_np = recon_mu.cpu().numpy()
+        logvar_np = logvar_z.cpu().numpy()
+
+
+
+    print("Adding CVAE embedding to adata....")
+    adata.obsm['X_ConfTr'] = latent_np
+    if 'umap_basis_model' in globals() and umap_basis_model is not None:
+        adata.obsm['X_ConfTr_umap'] = umap_basis_model.transform(latent_np)
+
+    print(f"Saving AnnData object to '{adata_save_path}'...")
+    adata.write_h5ad(adata_save_path)
 
 
 
@@ -1929,83 +2252,6 @@ with torch.no_grad():
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# Quantitative diagnostics
-# ---------------------------------------------------------------------------
-
-train_input_np = counts_tensor.cpu().numpy()
-sq_error = (recon_np - train_input_np) ** 2
-
-recon_mse_batch: Dict[str, float] = {}
-for batch_name, batch_idx in batch_to_idx.items():
-    mask = batch_codes == batch_idx
-    if mask.any():
-        recon_mse_batch[batch_name] = float(sq_error[mask].mean())
-
-recon_mse_celltype: Dict[str, float] = {}
-for ct_name, ct_idx in cell_type_to_idx.items():
-    mask = cell_type_codes == ct_idx
-    if mask.any():
-        recon_mse_celltype[ct_name] = float(sq_error[mask].mean())
-
-kl_per_cell = 0.5 * (
-    latent_np ** 2 + np.exp(logvar_np) - logvar_np - 1.0
-).sum(axis=1)
-
-kl_stats_batch: Dict[str, float] = {}
-for batch_name, batch_idx in batch_to_idx.items():
-    mask = batch_codes == batch_idx
-    if mask.any():
-        kl_stats_batch[batch_name] = float(kl_per_cell[mask].mean())
-
-kl_stats_celltype: Dict[str, float] = {}
-for ct_name, ct_idx in cell_type_to_idx.items():
-    mask = cell_type_codes == ct_idx
-    if mask.any():
-        kl_stats_celltype[ct_name] = float(kl_per_cell[mask].mean())
-
-print("\nReconstruction MSE per batch:")
-print(pd.Series(recon_mse_batch).sort_index().to_string())
-
-print("\nReconstruction MSE per cell type:")
-print(pd.Series(recon_mse_celltype).sort_index().to_string())
-
-print("\nAverage KL divergence per batch:")
-print(pd.Series(kl_stats_batch).sort_index().to_string())
-
-print("\nAverage KL divergence per cell type:")
-print(pd.Series(kl_stats_celltype).sort_index().to_string())
 
 
 # ---------------------------------------------------------------------------
@@ -2019,52 +2265,52 @@ print(pd.Series(kl_stats_celltype).sort_index().to_string())
 # Plot reconstructed space
 # ---------------------------------------------------------------------------
 
-pca_recon = PCA(n_components=2)
-coords_recon = pca_recon.fit_transform(recon_np)
+    pca_recon = PCA(n_components=2)
+    coords_recon = pca_recon.fit_transform(recon_np)
 
-recon_df = pd.DataFrame(
-    {
-        "PC1": coords_recon[:, 0],
-        "PC2": coords_recon[:, 1],
-        batch_key: obs_df[batch_key].values,
-        cell_type_col: obs_df[cell_type_col].values,
-    }
-)
+    recon_df = pd.DataFrame(
+        {
+            "PC1": coords_recon[:, 0],
+            "PC2": coords_recon[:, 1],
+            batch_key: obs_df[batch_key].values,
+            cell_type_col: obs_df[cell_type_col].values,
+        }
+    )
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-for ax, hue_col, title in zip(
-    axes,
-    [batch_key, cell_type_col],
-    ["Reconstruction by batch", "Reconstruction by cell type"],
-):
-    if sns:
-        sns.scatterplot(
-            data=recon_df,
-            x="PC1",
-            y="PC2",
-            hue=hue_col,
-            ax=ax,
-            s=35,
-            alpha=0.7,
-        )
-        ax.legend(loc="best", fontsize=8)
-    else:
-        for label in recon_df[hue_col].unique():
-            mask = recon_df[hue_col] == label
-            ax.scatter(
-                recon_df.loc[mask, "PC1"],
-                recon_df.loc[mask, "PC2"],
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    for ax, hue_col, title in zip(
+        axes,
+        [batch_key, cell_type_col],
+        ["Reconstruction by batch", "Reconstruction by cell type"],
+    ):
+        if sns:
+            sns.scatterplot(
+                data=recon_df,
+                x="PC1",
+                y="PC2",
+                hue=hue_col,
+                ax=ax,
                 s=35,
                 alpha=0.7,
-                label=label,
             )
-        ax.legend(loc="best", fontsize=8)
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.set_title(title)
-plt.tight_layout()
-plt.savefig(os.path.join(plots_dir, "reconstructed_space.png"), dpi=150)
-plt.close()
+            ax.legend(loc="best", fontsize=8)
+        else:
+            for label in recon_df[hue_col].unique():
+                mask = recon_df[hue_col] == label
+                ax.scatter(
+                    recon_df.loc[mask, "PC1"],
+                    recon_df.loc[mask, "PC2"],
+                    s=35,
+                    alpha=0.7,
+                    label=label,
+                )
+            ax.legend(loc="best", fontsize=8)
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_title(title)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, "reconstructed_space.png"), dpi=150)
+    plt.close()
 
 
-print(f"Plots saved to '{plots_dir}'.")
+    print(f"Plots saved to '{plots_dir}'.")
