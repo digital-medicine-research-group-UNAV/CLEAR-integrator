@@ -1,0 +1,86 @@
+{
+  "default_params": {
+    "subset_max_cells": 0,
+    "n_repetitions": 5,
+    "seed": 42,
+    "min_cells_per_type": 400,
+    "n_top_genes": 3000,
+    "data_path": "../data/immune_processed.h5ad",
+    "hyperparams": {
+      "beta": [
+        1.5
+      ],
+      "epochs_CG_start": [
+        15
+      ],
+      "conf_T_init": [
+        1.25
+      ],
+      "conf_T_max_decay": [
+        0.01
+      ],
+      "lambda_size": [
+        0.5
+      ],
+      "gamma_tau_align": [
+        1.5
+      ],
+      "batch_size": [
+        1024
+      ]
+    }
+  },
+  "experimento-batch-coverage": {
+    "description": "base",
+    "output_dir": "../results/immune/experimento-batch-coverage",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {
+      "D496": [
+        "D496",
+        "D503",
+        "640C",
+        "637C",
+        "A36",
+        "A29",
+        "A31",
+        "582C",
+        "A35",
+        "621B",
+        "A37",
+        "A52"
+      ]
+    }
+  },
+  "experimento-assay-coverage": {
+    "description": "base",
+    "output_dir": "../results/immune/experimento-assay-coverage",
+    "batch_key": "assay",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {
+      "10x 3' v3": [
+        "10x 3' v3",
+        "10x 5' v2",
+        "10x 5' v1"
+      ]
+    }
+  },
+  "experimento-development-coverage": {
+    "description": "base",
+    "output_dir": "../results/immune/experimento-development-coverage",
+    "batch_key": "development_stage",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {
+      "sixth decade human stage": [
+        "sixth decade human stage",
+        "seventh decade human stage",
+        "eighth decade human stage"
+      ]
+    }
+  }
+}
+
+

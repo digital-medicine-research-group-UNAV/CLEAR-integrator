@@ -1,0 +1,45 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Packaging artifacts
+*.egg-info/
+build/
+dist/
+
+# Local environments and notebooks
+.venv/
+venv/
+.pixi/
+.ipynb_checkpoints/
+
+# Local datasets and experiment outputs
+data/
+results/
+**/results/
+*.h5ad
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+
+# Generated plots and training artifacts
+paper/plots/
+plots/*.png
+plots/*.pdf
+plots/*.svg
+plots/*.csv
+
+# Coverage, logs, temporary files, and editor backups
+.coverage
+htmlcov/
+*.log
+*.tmp
+*.bak
+*~
+.DS_Store
