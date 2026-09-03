@@ -1,0 +1,49 @@
+
+
+
+{
+  "default_params": {
+    "subset_max_cells": 0,
+    "n_repetitions": 5,
+    "seed": 42,
+    "min_cells_per_type": 400,
+    "n_top_genes": 3000,
+    "data_path": "../data/diabetic-kidney-disease_processed.h5ad",
+    "hyperparams":{
+              "beta": [1.5],
+              "epochs_CG_start": [15],
+              "conf_T_init": [1.25],
+              "conf_T_max_decay": [0.01],
+              "lambda_size": [0.75],
+              "gamma_tau_align": [1.5],
+              "batch_size": [1024]
+            }
+},
+  "experimento-batch-coverage": {
+    "description": "base",
+    "output_dir": "../results/diabetic-kidney/experimento-batch-coverage",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {"healthy_6": ["control_1", "control_2", "control_3", "healthy_4", "healthy_5","healthy_6", 
+                                            "diabetic_2", "diabetic_3", "diabetic_4", "diabetic_5"]}
+  },
+  "experimento-assay-coverage": {
+    "description": "base",
+    "output_dir": "../results/diabetic-kidney/experimento-assay-coverage",
+    "batch_key": "assay",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {"10x 5' v1": ["10x 3' v3", "10x 5' v1"]}
+  },
+  "experimento-assay-annotation": {
+    "description": "base",
+    "output_dir": "../results/diabetic-kidney/experimento-assay-annotation",
+    "batch_key": "assay",
+    "cell_type_col": "cell_type",
+    "methods": [ "conftr"],
+    "reference_dictionary": {"10x 5' v1": ["10x 3' v3", "10x 5' v1"]}
+  }
+}
+
+

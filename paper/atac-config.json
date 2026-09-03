@@ -1,0 +1,56 @@
+
+
+{
+  "default_params": {
+    "subset_max_cells": 0,
+    "n_repetitions": 5,
+    "seed": 42,
+    "min_cells_per_type": 400,
+    "n_top_genes": 3000,
+    "data_path":  "../data/atac_processed.h5ad",
+    "hyperparams":{
+              "beta": [1.5],
+              "epochs_CG_start": [15],
+              "conf_T_init": [1.25],
+              "conf_T_max_decay": [0.01],
+              "lambda_size": [0.75],
+              "gamma_tau_align": [1.5],
+              "batch_size": [516]
+            }
+},
+  "experimento-batch-coverage": {
+    "description": "base",
+    "output_dir": "../results/atac/experimento-batch-coverage",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {"Cusanovich et al.": ["Cusanovich et al.", "Fang et al.", "10x Genomics"]}
+  },
+  "experimento-prueba": {
+    "description": "base",
+    "output_dir": "../results/atac/experimento-prueba",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {"Cusanovich et al.": [ "Fang et al.", "10x Genomics"]},
+    "hyperparams":{
+              "beta": [1.5],
+              "epochs_CG_start": [20],
+              "conf_T_init": [1.5],
+              "conf_T_max_decay": [1.5, 0.5, 0.01],
+              "lambda_size": [1.0],
+              "gamma_tau_align": [1.5],
+              "batch_size": [ 128, 256, 512, 1024]
+            }
+  },
+  "experimento-batch-coverage-prueba": {
+    "description": "base",
+    "output_dir": "../results/atac/experimento-batch-coverage-prueba",
+    "batch_key": "batch",
+    "cell_type_col": "cell_type",
+    "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
+    "reference_dictionary": {"Cusanovich et al.": [ "Fang et al.", "10x Genomics"]}
+  }
+}
+
+

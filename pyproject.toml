@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clear-integration"
+version = "0.1.0"
+description = "CLEAR supervised batch integration model for single-cell AnnData experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anndata",
+    "harmonypy",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "scanorama",
+    "scanpy",
+    "scib-metrics",
+    "scikit-learn",
+    "scipy",
+    "scvi-tools",
+    "seaborn",
+    "torch",
+    "umap-learn",
+]
+
+[project.optional-dependencies]
+torchsort = ["torchsort>=0.1.10,<0.2"]
+
+[project.scripts]
+clear-run-experiments = "clear_integration.paper._run_experiments:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
