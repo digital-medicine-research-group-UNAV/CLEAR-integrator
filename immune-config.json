@@ -21,7 +21,7 @@
 },
   "experimento-batch": {
     "description": "base",
-    "output_dir": "immune/experimento-batch",
+    "output_dir": "../experiments/immune/experimento-batch",
     "batch_key": "batch",
     "cell_type_col": "cell_type",
     "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
@@ -31,7 +31,7 @@
   },
   "experimento-assay": {
     "description": "base",
-    "output_dir": "immune/experimento-assay",
+    "output_dir": "../experiments/immune/experimento-assay",
     "batch_key": "assay",
     "cell_type_col": "cell_type",
     "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
@@ -39,7 +39,7 @@
   },
   "experimento-development": {
     "description": "base",
-    "output_dir": "immune/experimento-development",
+    "output_dir": "../experiments/immune/experimento-development",
     "batch_key": "development_stage",
     "cell_type_col": "cell_type",
     "methods": ["scvi","scanvi", "combat","scanorama", "conftr", "harmony"],
@@ -47,7 +47,7 @@
   },
   "experimento-prueba": {
     "description": "base",
-    "output_dir": "immune/experimento-prueba",
+    "output_dir": "../experiments/immune/experimento-prueba",
     "batch_key": "assay",
     "cell_type_col": "cell_type",
     "methods": ["conftr"],
